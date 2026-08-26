@@ -69,7 +69,7 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
         return await call_next(request)
 
     @app.get("/api/v1/health")
-    def health() -> dict[str, Any]:
+    async def health() -> dict[str, Any]:
         return {"status": "ok", "mode": "local", "library": str(state.library_root)}
 
     @app.get("/api/v1/library")

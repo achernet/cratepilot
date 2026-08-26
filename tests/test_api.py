@@ -1,10 +1,16 @@
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
-from cratepilot.api import LocalState, is_allowed_origin, is_local_host, validate_paths_payload
+from cratepilot.api import LocalState, create_app, is_allowed_origin, is_local_host, validate_paths_payload
 from cratepilot.storage import Store
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 def test_local_server_boundary_helpers():
@@ -14,6 +20,23 @@ def test_local_server_boundary_helpers():
     assert is_allowed_origin(None)
     assert is_allowed_origin("http://127.0.0.1:8765")
     assert not is_allowed_origin("https://attacker.invalid")
+
+
+@pytest.mark.anyio
+async def test_local_api_requires_session_token_and_rejects_foreign_origins(tmp_path: Path):
+    library = tmp_path / "music"
+    library.mkdir()
+    app = create_app(library, store=Store(tmp_path / "db.sqlite"))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        assert (await client.get("/api/v1/health")).status_code == 403
+        token = app.state.cratepilot.token
+        assert (await client.get("/api/v1/health", headers={"x-cratepilot-token": token})).status_code == 200
+        response = await client.get(
+            "/api/v1/health",
+            headers={"x-cratepilot-token": token, "origin": "https://attacker.invalid"},
+        )
+        assert response.status_code == 403
 
 
 def test_local_state_rejects_paths_outside_library_and_symlink_escapes(tmp_path: Path):
@@ -37,3 +60,18 @@ def test_analysis_paths_payload_must_be_a_list():
     with pytest.raises(HTTPException) as invalid:
         validate_paths_payload("not-a-list")
     assert invalid.value.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_analysis_endpoint_rejects_non_list_paths(tmp_path: Path):
+    library = tmp_path / "music"
+    library.mkdir()
+    app = create_app(library, store=Store(tmp_path / "db.sqlite"))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/v1/library/analyze",
+            headers={"x-cratepilot-token": app.state.cratepilot.token},
+            json={"paths": "not-a-list"},
+        )
+        assert response.status_code == 422
