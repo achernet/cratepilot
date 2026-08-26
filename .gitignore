@@ -48,3 +48,5 @@ next-env.d.ts
 *.m4a
 *.aac
 *.ogg
+__pycache__/
+*.py[cod]
