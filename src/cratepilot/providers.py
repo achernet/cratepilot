@@ -15,6 +15,22 @@ from typing import Any, Protocol, Sequence
 class ProviderError(RuntimeError):
     pass
 
+# Shazam does not provide a public API for related tracks, but the web page for a recognized track includes a
+# JSON array of citations that can be parsed to find similar tracks. The following headers are required, or
+# Shazam will return invalid information. The User-Agent is a recent Chrome on Android, and the Sec-CH-UA
+# header is required to avoid a 403 response.
+SHAZAM_SIMILARITY_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 10; K) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/151.0.0.0 Mobile Safari/537.36"
+    ),
+    "Sec-CH-UA": (
+        '"Not=A?Brand";v="99", '
+        '"Google Chrome";v="151", '
+        '"Chromium";v="151"'
+    ),
+}
 
 @dataclass(frozen=True)
 class ProviderTrack:
@@ -176,7 +192,8 @@ class ShazamRelatedProvider:
         if not shazam_url:
             return []
         request = urllib.request.Request(
-            str(shazam_url), headers={"User-Agent": "Mozilla/5.0 CratePilot/0.2"},
+            str(shazam_url),
+            headers=SHAZAM_SIMILARITY_HEADERS,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
