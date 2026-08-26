@@ -103,7 +103,11 @@ jobs:
           python -m pip install --target "$payload\python\Lib\site-packages" $wheel.FullName
 
           Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$payload\native\yt-dlp.exe"
-          Invoke-WebRequest "https://downloads.sourceforge.net/project/mp3gain/MP3Gain-Windows%20%28Stable%29/1.2.5/mp3gain-win-1_2_5.zip" -OutFile "$env:RUNNER_TEMP\mp3gain.zip"
+          $mp3gainUrl = "https://sourceforge.net/projects/mp3gain/files/MP3Gain-Windows%20%28Stable%29/1.2.5/mp3gain-win-1_2_5.zip/download"
+          & curl.exe --fail --location --retry 3 --user-agent "CratePilot release builder" --output "$env:RUNNER_TEMP\mp3gain.zip" $mp3gainUrl
+          if ($LASTEXITCODE -ne 0) { throw "Could not download the official MP3Gain archive" }
+          $signature = [System.IO.File]::ReadAllBytes("$env:RUNNER_TEMP\mp3gain.zip")[0..1]
+          if ($signature[0] -ne 0x50 -or $signature[1] -ne 0x4B) { throw "MP3Gain download was not a ZIP archive" }
           Expand-Archive "$env:RUNNER_TEMP\mp3gain.zip" "$env:RUNNER_TEMP\mp3gain" -Force
           $mp3gain = Get-ChildItem "$env:RUNNER_TEMP\mp3gain" -Filter mp3gain.exe -Recurse | Select-Object -First 1
           if (-not $mp3gain) { throw "The official MP3Gain archive did not contain mp3gain.exe" }
