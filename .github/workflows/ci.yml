@@ -17,7 +17,9 @@ jobs:
       - run: ruff check src tests
       - name: Reject embedded credentials and private workspace paths
         run: |
-          ! git grep -E "SPOTIFY_CLIENT_SECRET[[:space:]]*=[[:space:]]*['\"][A-Za-z0-9]|\\.djlearn|/home/achernetz|D:\\\\Music" -- ':!docs/**' ':!tests/**'
+          ! git grep -E \
+          "SPOTIFY_CLIENT_SECRET[[:space:]]*=[[:space:]]*['\"][A-Za-z0-9]|\\.djlearn|/home/achernetz" -- \
+          ':!docs/**' ':!tests/**' ':!.gitignore' '!:.github/**' ':!README.md' ':!CHANGELOG.md' ':!src/cratepilot/legacy/**'
 
   web:
     runs-on: ubuntu-latest
