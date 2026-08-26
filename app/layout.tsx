@@ -11,10 +11,10 @@ export const metadata: Metadata = {
     default: 'CratePilot — Build a set you can trust',
     template: '%s · CratePilot',
   },
-  description: 'An explainable DJ set planner built from audio analysis and patterns learned from real transitions.',
+  description: 'A provenance-aware music discovery workflow and explainable DJ set planner for the first booth.',
   openGraph: {
     title: 'CratePilot — Build a set you can trust',
-    description: 'Compose, understand, audition, and prepare a first-booth DJ set.',
+    description: 'Discover a crate, understand every recommendation, and prepare a first-booth DJ set.',
     url: 'https://cratepilot.chernetz.com',
     siteName: 'CratePilot',
     images: [{ url: '/og.png', width: 1731, height: 909, alt: 'CratePilot — Build a set you can trust' }],
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'CratePilot — Build a set you can trust',
-    description: 'An explainable DJ-set planner and first-booth workflow.',
+    description: 'Provenance-aware music discovery and an explainable first-booth DJ workflow.',
     images: ['/og.png'],
   },
   robots: { index: true, follow: true },

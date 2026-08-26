@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from cratepilot.models import CueSuggestionV1, FeatureContextV1, TrackAnalysisV1
-from cratepilot.planner import generate_drafts, plan_duration, replan_sequence, score_transition, target_energy
+from cratepilot.planner import (
+    evaluate_readiness,
+    generate_drafts,
+    plan_duration,
+    replan_sequence,
+    score_transition,
+    target_energy,
+)
 
 
 def context(bpm: float, camelot: str, energy: float) -> FeatureContextV1:
@@ -80,3 +87,25 @@ def test_manual_reorder_recomputes_only_the_sequence_contract():
     assert plan.track_ids == tuple(item.id for item in sequence)
     assert len(plan.transitions) == 2
     assert plan.duration_seconds == pytest.approx(plan_duration(sequence, plan.transitions), abs=0.001)
+
+
+def test_draft_count_is_configurable_and_bounded():
+    assert len(generate_drafts([track(index) for index in range(10)], count=5)) == 5
+    with pytest.raises(Exception, match="between 1 and 30"):
+        generate_drafts([track(1), track(2)], count=31)
+
+
+def test_strict_readiness_checks_transition_energy_and_diversity():
+    import dataclasses
+
+    sequence = [
+        dataclasses.replace(track(index), energy=target_energy(index / 4) * 100)
+        for index in range(5)
+    ]
+    plan = replan_sequence(sequence, title="Strict")
+    transitions = tuple(dataclasses.replace(item, total_score=.75, warning=None) for item in plan.transitions)
+    plan = dataclasses.replace(plan, duration_seconds=45 * 60, transitions=transitions, warnings=())
+    assert evaluate_readiness(plan, sequence)
+    assert not evaluate_readiness(dataclasses.replace(plan, warnings=("weak",)), sequence)
+    near_duplicate = dataclasses.replace(plan, id="other")
+    assert not evaluate_readiness(near_duplicate, sequence, [plan])

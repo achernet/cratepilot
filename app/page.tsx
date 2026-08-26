@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { DragEvent, useMemo, useRef, useState } from 'react';
+import { CSSProperties, DragEvent, useMemo, useRef, useState } from 'react';
 import { scoreTransition } from './lib/scorer';
 
 type Track = { id: string; artist: string; title: string; bpm: number; key: string; energy: number };
+type DiscoveryNode = Track & { relation: string; owned?: boolean; score: number };
 
 const catalog: Track[] = [
   { id: 'eternal-light', artist: 'Soundwave Sphere', title: 'Eternal Light', bpm: 128, key: '8A', energy: 41 },
@@ -20,6 +21,13 @@ const drafts = [
   ['ready', 'eternal-light', 'liberation', 'seven', 'language', 'summer-house'],
   ['eternal-light', 'liberation', 'ready', 'summer-house', 'seven', 'language'],
 ];
+
+const discoveryFixture: DiscoveryNode[] = catalog.map((track, index) => ({
+  ...track,
+  relation: index === 0 ? 'seed' : index < 3 ? 'same-artist evidence' : 'similar transition neighborhood',
+  owned: index === 0,
+  score: [100, 94, 91, 88, 86, 82][index],
+}));
 
 function keyFrequency(key: string) {
   return 98 * 2 ** ((Number.parseInt(key, 10) - 1) / 12);
@@ -88,6 +96,10 @@ export default function Home() {
   const [history, setHistory] = useState<string[][]>([]);
   const [playing, setPlaying] = useState(false);
   const [notice, setNotice] = useState('Draft 1 of 3 · optimized for a confident rise');
+  const [discovered, setDiscovered] = useState(1);
+  const [reviewed, setReviewed] = useState<Set<string>>(new Set());
+  const [crateBuilt, setCrateBuilt] = useState(false);
+  const [visualizer, setVisualizer] = useState(false);
   const dragIndex = useRef<number | null>(null);
 
   const tracks = useMemo(() => order.map(id => catalog.find(track => track.id === id)!), [order]);
@@ -148,7 +160,7 @@ export default function Home() {
     <main className="site-shell">
       <header className="topbar">
         <a className="brand" href="#top" aria-label="CratePilot home"><span className="brand-mark">CP</span><span>CratePilot</span></a>
-        <nav aria-label="Primary navigation"><a href="#planner">Planner</a><Link href="/case-study">Case study</Link><a className="nav-cta" href="#local">Run locally</a></nav>
+        <nav aria-label="Primary navigation"><a href="#discovery">Discovery</a><a href="#planner">Planner</a><Link href="/case-study">Case study</Link><a className="nav-cta" href="#local">Run locally</a></nav>
       </header>
 
       <section className="hero" id="top">
@@ -156,13 +168,26 @@ export default function Home() {
           <p className="eyebrow"><span /> Example-based transition intelligence</p>
           <h1>Build a set you can trust<br />before you enter the booth.</h1>
           <p className="hero-copy">CratePilot turns tempo, key, energy, and patterns learned from real DJ sets into an editable plan you can hear, understand, and take to Rekordbox.</p>
-          <div className="hero-actions"><a className="button button-primary" href="#planner">Build my demo set</a><Link className="button button-quiet" href="/case-study">Read the engineering story <span>↗</span></Link></div>
+          <div className="hero-actions"><a className="button button-primary" href="#discovery">Discover a demo crate</a><Link className="button button-quiet" href="/case-study">Read the engineering story <span>↗</span></Link></div>
         </div>
         <aside className="proof-card" aria-label="Project proof points">
           <p className="proof-label">Built from the signal up</p>
           <dl><div><dt>48</dt><dd>curated transitions</dd></div><div><dt>4</dt><dd>reference sets</dd></div><div><dt>99</dt><dd>passing workshop tests</dd></div></dl>
           <p>DSP heuristics + learned nearest-neighbor preferences. No black-box “AI DJ” claims.</p>
         </aside>
+      </section>
+
+      <section className="discovery-demo" id="discovery">
+        <div className="section-heading">
+          <div><p className="eyebrow"><span /> V2 · Sanitized interactive fixture</p><h2>One seed. A library with reasons.</h2></div>
+          <div className="readiness-badge"><small>Demo readiness</small><b>{crateBuilt ? '3 / 3' : `${Math.min(2, Math.floor(discovered / 2))} / 3`}</b><span>short representative drafts</span></div>
+        </div>
+        <p className="discovery-intro">This recruiter-safe simulation uses only the credited catalog below. Local mode can resolve Spotify metadata, recognize your own files, search two graph hops, and prepare a reviewed acquisition batch; the public site makes no provider calls and downloads nothing.</p>
+        <div className="discovery-grid">
+          <div className="seed-console"><div className="panel-label"><span>01 · Seed</span><b>Owned track</b></div><article className="seed-card"><span className="signal-dot" /><div><strong>Eternal Light</strong><small>Soundwave Sphere · local analysis</small></div><span className="key-pill">8A</span></article><dl><div><dt>2</dt><dd>graph hops</dd></div><div><dt>150</dt><dd>node cap</dd></div><div><dt>30</dt><dd>review max</dd></div></dl><button className="button button-primary" type="button" disabled={discovered === discoveryFixture.length} onClick={() => setDiscovered(value => Math.min(discoveryFixture.length, value + 2))}>{discovered === 1 ? 'Expand related tracks' : discovered < discoveryFixture.length ? 'Continue discovery' : 'Discovery limits reached'}</button></div>
+          <div className="graph-console"><div className="panel-label"><span>02 · Provenance graph</span><b>{discovered} canonical nodes</b></div><div className="fixture-graph" aria-label="Interactive track relationship graph">{discoveryFixture.slice(0, discovered).map((node, index) => <button key={node.id} className={`graph-node node-${index} ${node.owned ? 'owned' : ''}`} title={`${node.artist} · ${node.relation}`} type="button"><span>{node.title}</span><small>{node.score}%</small></button>)}</div><div className="graph-legend"><span><i className="lime" /> seed</span><span><i className="cyan" /> already owned</span><span><i /> related evidence</span></div></div>
+          <aside className="review-console"><div className="panel-label"><span>03 · Review</span><b>{reviewed.size} selected</b></div>{discoveryFixture.slice(1, discovered).map(node => <label className="review-row" key={node.id}><input type="checkbox" checked={reviewed.has(node.id)} onChange={() => setReviewed(current => { const next = new Set(current); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next; })} /><div><strong>{node.title}</strong><small>{node.relation} · duration cluster fit</small></div><b>{node.score}</b></label>)}{discovered === 1 && <div className="review-empty">Expand the graph to rank potential crate additions.</div>}<button className="button button-primary" disabled={reviewed.size < 3} type="button" onClick={() => { setCrateBuilt(true); setNotice('Smart crate materialized · 3 distinct short demo drafts ready'); }}>Build smart crate</button><button className="button button-quiet visualizer-button" type="button" onClick={() => setVisualizer(true)}>Open signal visualizer</button></aside>
+        </div>
       </section>
 
       <section className="planner" id="planner">
@@ -217,6 +242,7 @@ export default function Home() {
 
       <section className="credits" id="credits"><div><p className="eyebrow"><span /> Demo catalog</p><h2>Cleared, credited, transparent.</h2></div><div className="credit-list">{catalog.map(track => <a key={track.id} href={track.id === 'eternal-light' ? 'https://freemusicarchive.org/music/soundwave-sphere/single/eternal-lightmp3/' : ({ liberation: 'https://ccmixter.org/files/Karstenholymoly/61513', seven: 'https://ccmixter.org/files/bwatts/39793', ready: 'https://ccmixter.org/files/AnalogByNature/41473', language: 'https://ccmixter.org/files/evenafter/42087', 'summer-house': 'https://ccmixter.org/files/Robbero/46630' } as Record<string, string>)[track.id]}><span>{track.title}</span><small>{track.artist} · CC BY ↗</small></a>)}</div></section>
       <footer><a className="brand" href="#top"><span className="brand-mark">CP</span><span>CratePilot</span></a><p>Designed and engineered by Alex Chernetz · 2026</p><div><Link href="/case-study">Case study</Link><a href="https://github.com/achernet/cratepilot">Source</a></div></footer>
+      {visualizer && <div className="public-visualizer" role="dialog" aria-modal="true" aria-label="Signal visualizer"><div className="visualizer-field">{Array.from({ length: 48 }, (_, index) => <i key={index} style={{ '--i': index } as CSSProperties} />)}</div><div className="visualizer-copy"><span>CRATEPILOT SIGNAL / AURORA GRID</span><b>Eternal Light · 128 BPM · 8A</b></div><button className="button button-quiet" type="button" onClick={() => setVisualizer(false)}>Close visualizer</button></div>}
     </main>
   );
 }

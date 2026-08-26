@@ -2,21 +2,21 @@
 
 **Build a set you can trust before you enter the booth.**
 
-CratePilot is an explainable DJ-set planner with two deliberately separate modes:
+CratePilot is a provenance-aware music discovery and explainable DJ-set planner with two deliberately separate modes:
 
-- The public recruiter demo is anonymous and stateless beyond browser storage. It has six credited demo records, editable ranked drafts, transition explanations, an energy path, and a lightweight Web Audio audition.
-- The local application analyzes private MP3, FLAC, WAV, and M4A files, plans a 45-minute set, renders phrase-aware audio, and stages a non-destructive Rekordbox import package.
+- The public recruiter demo is anonymous and stateless beyond browser storage. It simulates seed expansion, provenance review, smart-crate readiness, editable drafts, and a signal visualizer using six credited records.
+- The local application discovers from private files, public Spotify URLs, or manual searches; reviews sources; verifies acquired audio; analyzes a library; plans 45-minute sets; and stages a non-destructive Rekordbox package.
 
 The recommendation model is example-based transition learning combined with DSP heuristics—not an autonomous “AI DJ.” The workshop that preceded this extraction has 99 passing tests and 7 passing subtests; this repository adds product-specific planner, schema, storage, security, and export coverage.
 
 ## Run locally
 
-Requirements: Python 3.11 or newer and FFmpeg on PATH.
+Requirements: Python 3.11 or newer and FFmpeg on PATH. Discovery verification additionally uses the `discovery` extra; permissive acquisition requires `yt-dlp` and `mp3gain`.
 
 ~~~powershell
 py -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e .
+pip install -e ".[discovery]"
 cratepilot --library "D:\Music\Trance"
 ~~~
 
@@ -29,13 +29,21 @@ cratepilot analyze PATH...
 cratepilot plan --preset first-booth-45 --library PATH
 cratepilot render PLAN --library-json ANALYSIS --output reference-mix.flac
 cratepilot export PLAN --library-json ANALYSIS --output EXPORT_FOLDER
+cratepilot discover "Artist - Title" --target-drafts 8
+cratepilot discover --spotify https://open.spotify.com/track/...
+cratepilot acquire                         # inspect the queue
+cratepilot acquire ID...                   # approve only
+cratepilot acquire ID... --run             # run an approved local batch
+cratepilot catalog
+cratepilot crate --name Peak --rule energy:gte:75
+cratepilot crate --id CRATE_ID --output peak.m3u8
 ~~~
 
 See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for the complete Windows and Rekordbox handoff.
 
 ## What the planner optimizes
 
-Bounded beam search returns three deterministic drafts. Its objective is 70% mean transition compatibility, 20% fit to the requested energy curve, 5% final-duration fit after overlaps, and 5% artist spacing.
+Bounded beam search returns 1–30 deterministic drafts. Its objective is 70% mean transition compatibility, 20% fit to the requested energy curve, 5% final-duration fit after overlaps, and 5% artist spacing. Strict readiness additionally requires 42–48 minutes, no transition warning, at least 0.55 mean compatibility, energy error no greater than 20 points, artist spacing, and no more than 0.75 Jaccard overlap with another counted draft.
 
 Transition compatibility explains tempo, Camelot harmony, energy, low-end balance, timbre, rhythm, and the learned-neighbor contribution. Locked tracks and user ordering are hard constraints. Manual changes are warned on, never silently undone.
 
@@ -59,6 +67,10 @@ The Python package is under src/cratepilot; the shared product presentation is t
 ## Privacy and provenance
 
 The old .djlearn workspace, cached audio, personal filenames, and absolute music paths are excluded from this project. No public route accepts uploads. Public assets contain the social preview, sanitized metadata, and code only; the browser audition is synthesized rather than redistributed source audio. See [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+
+Local acquisition is off by default. Safe mode exposes Beatport, Bandcamp, and YouTube source links. Enabling automation requires a versioned standing acknowledgement saved in the local SQLite database and an explicit review batch of at most 30 candidates. Downloaded sources are content-addressed and immutable; verified 320 kbps DJ derivatives are separate files. Identity mismatches are quarantined rather than promoted.
+
+Spotify is used for metadata and links only. Configure `CRATEPILOT_SPOTIFY_CLIENT_ID` and `CRATEPILOT_SPOTIFY_CLIENT_SECRET` for public track or playlist resolution; no Spotify-hosted audio is downloaded or analyzed.
 
 ## First-booth checklist
 

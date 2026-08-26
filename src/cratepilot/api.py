@@ -11,11 +11,17 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from platformdirs import user_cache_path
 
+from .acquisition import AcquisitionService
 from .analysis import analyze_paths, scan_library
+from .crates import materialize_crate, write_m3u8
+from .discovery import Catalog, DiscoveryService
 from .exporter import write_rekordbox_package
+from .identity import stable_id
 from .jobs import JobRunner
-from .models import to_dict
+from .models import SmartCrateV1, to_dict
 from .planner import generate_drafts, replan_sequence
+from .providers import ProviderTrack, ShazamRelatedProvider, SpotifyMetadataProvider, YtDlpSearchProvider
+from .recognition import ShazamMusicBrainzVerifier
 from .storage import Store
 
 
@@ -85,6 +91,7 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
             paths = [state.validate_path(item) for item in supplied] if supplied else scan_library(state.library_root)
             tracks = analyze_paths(paths, cache_directory=state.cache_directory)
             state.store.save_tracks(tracks)
+            Catalog(state.store).import_analyses(tracks)
             return {"tracks": [to_dict(track) for track in tracks]}
 
         return {"job_id": state.jobs.submit("analysis", operation)}
@@ -97,10 +104,158 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
             state.store.tracks(),
             target_duration_seconds=target_minutes * 60.0,
             locked_positions={int(key): value for key, value in payload.get("locked_positions", {}).items()},
+            count=int(payload.get("count", 3)),
         )
         for draft in drafts:
             state.store.save_plan(draft)
         return {"plans": [to_dict(item) for item in drafts]}
+
+    @app.get("/api/v1/catalog")
+    async def catalog() -> dict[str, Any]:
+        return {
+            "tracks": [to_dict(item) for item in state.store.catalog_tracks()],
+            "edges": [to_dict(item) for item in state.store.discovery_edges()],
+        }
+
+    @app.post("/api/v1/catalog/merge")
+    async def merge_catalog(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            merged = Catalog(state.store).merge(str(payload["target_id"]), str(payload["source_id"]))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"track": to_dict(merged)}
+
+    @app.post("/api/v1/discovery/sessions")
+    async def create_discovery(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        seeds: list[ProviderTrack] = []
+        for seed in payload.get("seeds", []):
+            kind = seed.get("kind", "manual")
+            if kind == "manual":
+                seeds.append(ProviderTrack(str(seed["artist"]), str(seed["title"]), "manual"))
+            elif kind == "spotify":
+                try:
+                    seeds.extend(SpotifyMetadataProvider().resolve(str(seed["url"])))
+                except (ValueError, RuntimeError) as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+            elif kind == "local":
+                path = state.validate_path(str(seed["path"]))
+                tracks = analyze_paths([path], cache_directory=state.cache_directory)
+                state.store.save_tracks(tracks)
+                Catalog(state.store).import_analyses(tracks)
+                seeds.extend(
+                    ProviderTrack(item.artist, item.title, "local", external_id=item.id, evidence={"path": item.path})
+                    for item in tracks
+                )
+            else:
+                raise HTTPException(status_code=422, detail=f"Unsupported seed kind: {kind}")
+        if not seeds:
+            raise HTTPException(status_code=422, detail="At least one discovery seed is required.")
+        service = DiscoveryService(state.store)
+        session = service.create_session(
+            seeds, max_depth=int(payload.get("max_depth", 2)), max_nodes=int(payload.get("max_nodes", 150)),
+            review_batch_size=int(payload.get("review_batch_size", 30)),
+            readiness_target=int(payload.get("readiness_target", 8)), result_count=int(payload.get("result_count", 30)),
+        )
+        return {"session": to_dict(session)}
+
+    @app.post("/api/v1/discovery/sessions/{session_id}/run")
+    def run_discovery(session_id: str) -> dict[str, str]:
+        if state.store.discovery_session(session_id) is None:
+            raise HTTPException(status_code=404, detail="Discovery session not found.")
+
+        def operation() -> dict[str, Any]:
+            session = DiscoveryService(
+                state.store, similarity=ShazamRelatedProvider(), video_search=YtDlpSearchProvider()
+            ).run(session_id)
+            return {"session": to_dict(session)}
+
+        return {"job_id": state.jobs.submit("discovery", operation)}
+
+    @app.get("/api/v1/discovery/sessions/{session_id}")
+    async def discovery_session(session_id: str) -> dict[str, Any]:
+        value = state.store.discovery_session(session_id)
+        if value is None:
+            raise HTTPException(status_code=404, detail="Discovery session not found.")
+        return {"session": to_dict(value)}
+
+    def acquisition_service() -> AcquisitionService:
+        return AcquisitionService(state.store, verifier=ShazamMusicBrainzVerifier())
+
+    @app.put("/api/v1/acquisition/acknowledgement")
+    async def acquisition_acknowledgement(request: Request) -> dict[str, bool]:
+        payload = await request.json()
+        acquisition_service().acknowledge(bool(payload.get("accepted")))
+        return {"accepted": acquisition_service().is_acknowledged()}
+
+    @app.get("/api/v1/acquisition/candidates")
+    async def acquisition_candidates() -> dict[str, Any]:
+        return {"candidates": [to_dict(item) for item in state.store.candidates()]}
+
+    @app.post("/api/v1/acquisition/jobs")
+    async def approve_acquisition(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            value = acquisition_service().approve(tuple(str(item) for item in payload.get("candidate_ids", [])))
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"job": to_dict(value)}
+
+    @app.post("/api/v1/acquisition/jobs/{acquisition_job_id}/run")
+    def run_acquisition(acquisition_job_id: str) -> dict[str, str]:
+        value = next((item for item in state.store.acquisition_jobs() if item.id == acquisition_job_id), None)
+        if value is None:
+            raise HTTPException(status_code=404, detail="Acquisition job not found.")
+
+        def operation() -> dict[str, Any]:
+            return {"acquisition": to_dict(acquisition_service().run(value))}
+
+        return {"job_id": state.jobs.submit("acquisition", operation)}
+
+    @app.get("/api/v1/crates")
+    async def crates() -> dict[str, Any]:
+        return {"crates": [to_dict(item) for item in state.store.crates()]}
+
+    @app.post("/api/v1/crates")
+    async def save_crate(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        name = str(payload.get("name", "New crate")).strip()
+        crate = SmartCrateV1(
+            id=str(payload.get("id") or stable_id("crate", name)), name=name,
+            rules=tuple(payload.get("rules", [])), include_track_ids=tuple(payload.get("include_track_ids", [])),
+            exclude_track_ids=tuple(payload.get("exclude_track_ids", [])), order_by=str(payload.get("order_by", "energy")),
+            descending=bool(payload.get("descending", False)),
+        )
+        try:
+            crate = materialize_crate(crate, state.store.catalog_tracks(), state.store.tracks())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        state.store.save_crate(crate)
+        return {"crate": to_dict(crate)}
+
+    @app.post("/api/v1/crates/{crate_id}/m3u8")
+    async def export_crate(crate_id: str, request: Request) -> dict[str, str]:
+        crate = state.store.crate(crate_id)
+        if crate is None:
+            raise HTTPException(status_code=404, detail="Smart crate not found.")
+        payload = await request.json()
+        target = Path(str(payload["path"])).expanduser().resolve()
+        write_m3u8(target, crate, state.store.catalog_tracks())
+        return {"path": str(target)}
+
+    @app.get("/api/v1/catalog/{track_id}/audio")
+    async def stream_audio(track_id: str):
+        track = state.store.catalog_track(track_id)
+        if not track:
+            raise HTTPException(status_code=404, detail="Catalog track not found.")
+        asset = next((item for item in track.assets if item.kind == "dj-mp3"), None)
+        if not asset:
+            raise HTTPException(status_code=404, detail="No playable derivative exists for this track.")
+        path = Path(asset.path).resolve()
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Playable derivative is missing.")
+        return FileResponse(path, media_type=asset.mime_type or "audio/mpeg", filename=path.name)
 
     @app.put("/api/v1/plans/{plan_id}/order")
     async def reorder(plan_id: str, request: Request) -> dict[str, Any]:

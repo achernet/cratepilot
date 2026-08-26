@@ -166,6 +166,8 @@ def generate_drafts(
     beam_width: int = 50,
     count: int = 3,
 ) -> list[SetPlanV1]:
+    if not 1 <= count <= 30:
+        raise PlanningError("Draft count must be between 1 and 30.")
     library = tuple(sorted(tracks, key=lambda item: item.id))
     if len(library) < 2:
         raise PlanningError("At least two analyzed tracks are required to build a set.")
@@ -248,6 +250,44 @@ def generate_drafts(
     return plans
 
 
+def evaluate_readiness(
+    plan: SetPlanV1,
+    tracks: Sequence[TrackAnalysisV1],
+    accepted: Sequence[SetPlanV1] = (),
+) -> bool:
+    """Apply the strict First Booth readiness contract to a generated plan."""
+    if not 42 * 60 <= plan.duration_seconds <= 48 * 60:
+        return False
+    if plan.warnings or any(item.total_score < WEAK_TRANSITION_THRESHOLD for item in plan.transitions):
+        return False
+    if plan.transitions and sum(item.total_score for item in plan.transitions) / len(plan.transitions) < 0.55:
+        return False
+    if len(set(plan.track_ids)) != len(plan.track_ids):
+        return False
+    by_id = {track.id: track for track in tracks}
+    try:
+        sequence = [by_id[track_id] for track_id in plan.track_ids]
+    except KeyError:
+        return False
+    if any(
+        left.artist and right.artist and left.artist.casefold() == right.artist.casefold()
+        for left, right in zip(sequence, sequence[1:])
+    ):
+        return False
+    energy_error = sum(
+        abs(track.energy - target_energy(index / max(1, len(sequence) - 1)) * 100)
+        for index, track in enumerate(sequence)
+    ) / max(1, len(sequence))
+    if energy_error > 20:
+        return False
+    candidate_ids = set(plan.track_ids)
+    for previous in accepted:
+        previous_ids = set(previous.track_ids)
+        if len(candidate_ids & previous_ids) / max(1, len(candidate_ids | previous_ids)) > 0.75:
+            return False
+    return True
+
+
 def replan_sequence(sequence: Sequence[TrackAnalysisV1], *, title: str, preset: str = "manual") -> SetPlanV1:
     if len({item.id for item in sequence}) != len(sequence):
         raise PlanningError("A set cannot contain duplicate tracks.")
@@ -261,4 +301,3 @@ def replan_sequence(sequence: Sequence[TrackAnalysisV1], *, title: str, preset: 
         locked_positions={}, energy_curve=FIRST_BOOTH_CURVE, transitions=transitions,
         objective_score=round(score, 4), warnings=tuple(item.warning for item in transitions if item.warning),
     )
-
