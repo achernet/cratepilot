@@ -14,6 +14,7 @@ from .acquisition import AcquisitionService
 from .analysis import analyze_paths, scan_library
 from .crates import materialize_crate, write_m3u8
 from .discovery import Catalog, DiscoveryService
+from .doctor import doctor_report
 from .exporter import write_rekordbox_package
 from .identity import stable_id
 from .models import SmartCrateV1, plan_from_dict, to_dict, track_from_dict, write_json
@@ -28,6 +29,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--library", type=Path, help="Music folder to open in the local CratePilot interface")
     subparsers = parser.add_subparsers(dest="command")
+    doctor = subparsers.add_parser("doctor", help="Verify native audio tools are available on PATH")
+    doctor.add_argument("--json", action="store_true", help="Print a machine-readable dependency report")
     analyze = subparsers.add_parser("analyze", help="Analyze tracks or a complete folder")
     analyze.add_argument("paths", nargs="+", type=Path)
     analyze.add_argument("--output", type=Path)
@@ -103,6 +106,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.library is None:
             parser.error("provide --library PATH to open the local interface")
         return _serve(args.library)
+    if args.command == "doctor":
+        report = doctor_report()
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"CratePilot runtime: Python {report['runtime']}")
+            for item in report["dependencies"]:
+                marker = "OK" if item["available"] else "MISSING"
+                detail = item["version"] or item["path"] or item["purpose"]
+                print(f"[{marker:7}] {item['command']}: {detail}")
+        return 0 if report["ok"] else 1
     if args.command == "analyze":
         paths = []
         for value in args.paths:

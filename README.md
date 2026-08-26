@@ -11,12 +11,15 @@ The recommendation model is example-based transition learning combined with DSP 
 
 ## Run locally
 
-Requirements: Python 3.11 or newer and FFmpeg on PATH. Discovery verification additionally uses the `discovery` extra; permissive acquisition requires `yt-dlp` and `mp3gain`.
+On Windows 10/11, download the [one-click installer](https://github.com/achernet/cratepilot/releases/latest/download/CratePilot-Setup-x64.exe). It bundles an isolated Python 3.13 runtime plus `songrec`, FFmpeg/FFprobe, `mp3gain`, and `yt-dlp`, adds CratePilot's command shims to the user PATH, and runs `cratepilot doctor` before launch.
+
+For a source installation, Python 3.11 or newer plus `songrec`, `ffmpeg`, `ffprobe`, `mp3gain`, and `yt-dlp` must be on PATH:
 
 ~~~powershell
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[discovery]"
+cratepilot doctor
 cratepilot --library "D:\Music\Trance"
 ~~~
 
@@ -37,6 +40,7 @@ cratepilot acquire ID... --run             # run an approved local batch
 cratepilot catalog
 cratepilot crate --name Peak --rule energy:gte:75
 cratepilot crate --id CRATE_ID --output peak.m3u8
+cratepilot doctor                         # verify every native command
 ~~~
 
 See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for the complete Windows and Rekordbox handoff.
@@ -68,7 +72,7 @@ The Python package is under src/cratepilot; the shared product presentation is t
 
 The old .djlearn workspace, cached audio, personal filenames, and absolute music paths are excluded from this project. No public route accepts uploads. Public assets contain the social preview, sanitized metadata, and code only; the browser audition is synthesized rather than redistributed source audio. See [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
 
-Local acquisition is off by default. Safe mode exposes Beatport, Bandcamp, and YouTube source links. Enabling automation requires a versioned standing acknowledgement saved in the local SQLite database and an explicit review batch of at most 30 candidates. Downloaded sources are content-addressed and immutable; verified 320 kbps DJ derivatives are separate files. Identity mismatches are quarantined rather than promoted.
+Local acquisition is off by default. Safe mode exposes Beatport, Bandcamp, and YouTube source links. Enabling automation requires a versioned standing acknowledgement saved in the local SQLite database and an explicit review batch of at most 30 candidates. Downloaded sources are content-addressed and immutable; verified 320 kbps DJ derivatives are separate files. SongRec invokes Shazam recognition through its external JSON CLI, so CratePilot supports Python 3.13+ without importing `shazamio`. Identity mismatches are quarantined rather than promoted.
 
 Spotify is used for metadata and links only. Configure `CRATEPILOT_SPOTIFY_CLIENT_ID` and `CRATEPILOT_SPOTIFY_CLIENT_SECRET` for public track or playlist resolution; no Spotify-hosted audio is downloaded or analyzed.
 

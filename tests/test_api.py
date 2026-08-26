@@ -31,7 +31,9 @@ async def test_local_api_requires_session_token_and_rejects_foreign_origins(tmp_
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         assert (await client.get("/api/v1/health")).status_code == 403
         token = app.state.cratepilot.token
-        assert (await client.get("/api/v1/health", headers={"x-cratepilot-token": token})).status_code == 200
+        healthy = await client.get("/api/v1/health", headers={"x-cratepilot-token": token})
+        assert healthy.status_code == 200
+        assert "system" in healthy.json()
         response = await client.get(
             "/api/v1/health",
             headers={"x-cratepilot-token": token, "origin": "https://attacker.invalid"},

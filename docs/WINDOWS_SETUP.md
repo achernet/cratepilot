@@ -1,19 +1,32 @@
 # Windows setup and first-booth handoff
 
-## Install once
+## One-click install
 
-1. Install Python 3.11 or newer from python.org and enable **Add Python to PATH**.
-2. Install FFmpeg, `yt-dlp`, and `mp3gain`; confirm each command works in PowerShell. The latter two are needed only for permissive acquisition.
-3. Download or clone CratePilot, open PowerShell in its folder, and run:
+1. Download [CratePilot-Setup-x64.exe](https://github.com/achernet/cratepilot/releases/latest/download/CratePilot-Setup-x64.exe).
+2. Run it as your normal Windows user. The installer is per-user and does not require administrator access.
+3. Leave **Launch CratePilot** selected, choose the music folder CratePilot may read, and work in the browser window it opens.
+
+The installer contains an isolated Python 3.13 runtime, SongRec, FFmpeg/FFprobe, MP3Gain, yt-dlp, and all Python dependencies. Its `bin` directory is added to your user PATH. Check the installation at any time:
+
+~~~powershell
+cratepilot doctor
+~~~
+
+The GitHub release workflow builds SongRec 0.7.4 in an MSYS2 UCRT64 environment, assembles the native DLL closure, installs the CratePilot wheel into the bundled Python runtime, compiles a standard `setup.exe`, silently installs it on a clean Windows runner, and exercises every bundled command before publishing the release asset.
+
+## Source install (development fallback)
+
+Install Python 3.11 or newer and put `songrec`, `ffmpeg`, `ffprobe`, `mp3gain`, and `yt-dlp` on PATH. Then clone CratePilot and run:
 
 ~~~powershell
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install ".[discovery]"
+cratepilot doctor
 cratepilot --library "D:\Music\Trance"
 ~~~
 
-On future sessions, activate the environment and run only the last command. A desktop shortcut may target:
+On future sessions, activate the environment and run only the last command. The setup.exe creates its own Start Menu and desktop launchers; the following is only for a source checkout:
 
 ~~~text
 powershell.exe -NoExit -Command "& 'C:\path\to\cratepilot\.venv\Scripts\Activate.ps1'; cratepilot --library 'D:\Music\Trance'"
@@ -25,7 +38,7 @@ powershell.exe -NoExit -Command "& 'C:\path\to\cratepilot\.venv\Scripts\Activate
 2. Leave the initial safety limits at two hops, 150 canonical nodes, 30 review candidates, and eight strict drafts.
 3. Inspect the graph and version-score explanations. Already-owned and duplicate identities do not increase readiness.
 4. Prefer the safe Beatport/Bandcamp/source links. If you enable permissive acquisition, read the acknowledgement and approve the exact batch first.
-5. Let CratePilot verify each acquired result. Files that do not reach a 6-of-11 Shazam consensus are rejected or quarantined.
+5. Let CratePilot verify each acquired result. SongRec analyzes 11 random 12-second excerpts; files that do not reach a 6-of-11 Shazam-result consensus are rejected or quarantined.
 6. Build smart crates with tags and analysis rules, then materialize them to M3U8 or send them to planning.
 
 Spotify URLs require metadata credentials set as `CRATEPILOT_SPOTIFY_CLIENT_ID` and `CRATEPILOT_SPOTIFY_CLIENT_SECRET`. Spotify audio is never fetched.

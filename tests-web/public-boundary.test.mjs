@@ -9,7 +9,6 @@ const publicSources = [
 
 test('public mode is fixture-only and contains no provider or acquisition transport', () => {
   assert.doesNotMatch(publicSources, /\bfetch\s*\(/);
-  assert.doesNotMatch(publicSources, /XMLHttpRequest|yt-dlp|CRATEPILOT_SPOTIFY_CLIENT_SECRET/);
+  assert.doesNotMatch(publicSources, /XMLHttpRequest|CRATEPILOT_SPOTIFY_CLIENT_SECRET|child_process|spawn\s*\(/);
   assert.match(publicSources, /public site makes no provider calls and downloads nothing/i);
 });
-

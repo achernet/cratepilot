@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import random
 import subprocess
@@ -29,14 +28,26 @@ def _duration(path: Path) -> float:
 
 def _recognize(path: Path) -> dict[str, Any]:
     try:
-        from shazamio import Shazam
-    except ImportError as exc:
-        raise RecognitionError("Install CratePilot's 'discovery' extra to enable Shazam verification.") from exc
-
-    async def operation():
-        return await Shazam().recognize(str(path))
-
-    return asyncio.run(operation())
+        result = subprocess.run(
+            ["songrec", "recognize", "-j", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        payload = json.loads(result.stdout)
+    except FileNotFoundError as exc:
+        raise RecognitionError("songrec is required on PATH for identity verification.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RecognitionError("songrec recognition timed out.") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "unknown error").strip()
+        raise RecognitionError(f"songrec recognition failed: {detail}") from exc
+    except json.JSONDecodeError as exc:
+        raise RecognitionError("songrec returned invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise RecognitionError("songrec returned an unexpected JSON document.")
+    return payload
 
 
 def _musicbrainz_year(artist: str, title: str) -> tuple[int | None, float]:
@@ -105,4 +116,3 @@ class ShazamMusicBrainzVerifier:
             "year": year, "year_source": "musicbrainz" if year else None, "year_confidence": confidence,
             "shazam_url": (winning_raw or {}).get("track", {}).get("url"),
         }
-

@@ -15,6 +15,7 @@ from .acquisition import AcquisitionService
 from .analysis import analyze_paths, scan_library
 from .crates import materialize_crate, write_m3u8
 from .discovery import Catalog, DiscoveryService
+from .doctor import doctor_report
 from .exporter import write_rekordbox_package
 from .identity import stable_id
 from .jobs import JobRunner
@@ -76,7 +77,7 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
 
     @app.get("/api/v1/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "mode": "local", "library": str(state.library_root)}
+        return {"status": "ok", "mode": "local", "library": str(state.library_root), "system": doctor_report()}
 
     @app.get("/api/v1/library")
     def library() -> dict[str, Any]:

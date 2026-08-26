@@ -1,0 +1,152 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-installer.yml"
+      - "packaging/windows/**"
+      - "pyproject.toml"
+      - "src/**"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  setup-exe:
+    name: Build and install on Windows 11
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      SONGREC_VERSION: "0.7.4"
+      PYTHON_VERSION: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Test and build the Python package on 3.13
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip install -e ".[dev]"
+          python -m pytest
+          python -m build --wheel
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-rust
+            mingw-w64-ucrt-x86_64-gettext-runtime
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-libsoup3
+            mingw-w64-ucrt-x86_64-ffmpeg
+
+      - name: Build SongRec CLI and collect its native runtime
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          git clone --branch "$SONGREC_VERSION" --depth 1 https://github.com/marin-m/SongRec.git /tmp/SongRec
+          cd /tmp/SongRec
+          cargo build --release --locked --no-default-features --features ffmpeg
+          native="$GITHUB_WORKSPACE/build/native"
+          mkdir -p "$native"
+          cp target/release/songrec.exe /ucrt64/bin/ffmpeg.exe /ucrt64/bin/ffprobe.exe "$native/"
+
+          copy_dependencies() {
+            local changed=1
+            while [[ "$changed" -eq 1 ]]; do
+              changed=0
+              while IFS= read -r dependency; do
+                [[ -f "$dependency" ]] || continue
+                target="$native/$(basename "$dependency")"
+                if [[ ! -f "$target" ]]; then
+                  cp "$dependency" "$target"
+                  changed=1
+                fi
+              done < <(for executable in "$native"/*.exe "$native"/*.dll; do
+                [[ -f "$executable" ]] && ldd "$executable" 2>/dev/null || true
+              done | awk '/\/ucrt64\/bin\// {print $3}' | sort -u)
+            done
+          }
+          copy_dependencies
+          "$native/songrec.exe" --version
+          "$native/ffmpeg.exe" -version
+
+      - name: Assemble the portable application payload
+        shell: pwsh
+        run: |
+          $payload = Join-Path $PWD "build\payload"
+          New-Item -ItemType Directory -Force "$payload\bin", "$payload\native", "$payload\python" | Out-Null
+          Copy-Item "packaging\windows\cratepilot.cmd", "packaging\windows\python.cmd" "$payload\bin"
+          Copy-Item "packaging\windows\CratePilot.ps1", "packaging\windows\THIRD_PARTY_NOTICES.md", "LICENSE" $payload
+          Copy-Item "build\native\*" "$payload\native"
+
+          Copy-Item "$env:pythonLocation\*" "$payload\python" -Recurse -Force
+          if (Test-Path "$payload\python\Lib\site-packages") {
+            Remove-Item "$payload\python\Lib\site-packages\*" -Recurse -Force
+          }
+          $wheel = Get-ChildItem "dist\cratepilot-*.whl" | Select-Object -First 1
+          python -m pip install --target "$payload\python\Lib\site-packages" $wheel.FullName
+
+          Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$payload\native\yt-dlp.exe"
+          Invoke-WebRequest "https://downloads.sourceforge.net/project/mp3gain/MP3Gain-Windows%20%28Stable%29/1.2.5/mp3gain-win-1_2_5.zip" -OutFile "$env:RUNNER_TEMP\mp3gain.zip"
+          Expand-Archive "$env:RUNNER_TEMP\mp3gain.zip" "$env:RUNNER_TEMP\mp3gain" -Force
+          $mp3gain = Get-ChildItem "$env:RUNNER_TEMP\mp3gain" -Filter mp3gain.exe -Recurse | Select-Object -First 1
+          if (-not $mp3gain) { throw "The official MP3Gain archive did not contain mp3gain.exe" }
+          Copy-Item $mp3gain.FullName "$payload\native\mp3gain.exe"
+
+          & "$payload\bin\cratepilot.cmd" --version
+          & "$payload\bin\cratepilot.cmd" doctor --json
+          if ($LASTEXITCODE -ne 0) { throw "Portable dependency check failed" }
+
+      - name: Compile setup.exe with Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $env:CRATEPILOT_VERSION = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          $env:CRATEPILOT_PAYLOAD = (Resolve-Path "build\payload").Path
+          $env:CRATEPILOT_OUTPUT = (New-Item -ItemType Directory -Force "build\installer").FullName
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "packaging\windows\CratePilot.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
+
+      - name: Silent install and installed-environment smoke test
+        shell: pwsh
+        run: |
+          $install = Join-Path $env:RUNNER_TEMP "CratePilot-installed"
+          $setup = Resolve-Path "build\installer\CratePilot-Setup-x64.exe"
+          $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$install" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          & "$install\bin\cratepilot.cmd" doctor --json
+          if ($LASTEXITCODE -ne 0) { throw "Installed dependency check failed" }
+          & "$install\bin\python.cmd" -c "import cratepilot; print(cratepilot.__version__)"
+          & "$install\native\songrec.exe" --version
+          & "$install\native\ffmpeg.exe" -version
+          & "$install\native\mp3gain.exe" -v
+          & "$install\native\yt-dlp.exe" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CratePilot-Setup-x64
+          path: build/installer/CratePilot-Setup-x64.exe
+          if-no-files-found: error
+
+      - name: Publish versioned GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/installer/CratePilot-Setup-x64.exe
+          generate_release_notes: true

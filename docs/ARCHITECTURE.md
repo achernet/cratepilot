@@ -38,6 +38,8 @@ React/TypeScript UI                              │
 
 Public assets cannot receive or process visitor audio. Local endpoints require a random token and reject foreign origins. Every analysis path must resolve beneath the selected library root. Exports copy rather than move source tracks, never contain absolute playlist paths, and refuse a non-empty destination.
 
-Acquisition uses subprocess argument arrays, temporary staging, content hashes, atomic promotion, and exact managed-asset streaming. Eleven random 12-second Shazam samples require six matching votes. A mismatch is quarantined and the next approved ranked version is tried.
+Acquisition uses subprocess argument arrays, temporary staging, content hashes, atomic promotion, and exact managed-asset streaming. The external `songrec recognize -j` CLI runs against eleven random 12-second samples; six matching Shazam results are required. A mismatch is quarantined and the next approved ranked version is tried. Keeping recognition out of the Python process avoids the Python 3.13 incompatibility in `shazamio`.
+
+The release pipeline builds SongRec in MSYS2 UCRT64, bundles the complete native dependency closure and an isolated Python 3.13 runtime, then compiles and silently installs `CratePilot-Setup-x64.exe` on a clean Windows runner. The installed `cratepilot doctor` command is the acceptance gate for Python, SongRec, FFmpeg/FFprobe, MP3Gain, and yt-dlp.
 
 The private workshop’s .djlearn, cached source audio, recognition data, and local filenames are intentionally absent. Spotify credentials are supplied through environment variables and never enter public builds.
