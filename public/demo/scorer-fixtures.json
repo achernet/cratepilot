@@ -1,0 +1,23 @@
+[
+  {
+    "source": { "artist": "Artist 1", "bpm": 131, "key": "2A", "energy": 41 },
+    "target": { "artist": "Artist 2", "bpm": 132, "key": "3A", "energy": 47 },
+    "expected_total": 0.8079,
+    "expected_components": { "tempo": 0.96, "harmony": 0.4868, "energy": 0.9912, "learned": 0.73 },
+    "expected_explanation": ["131 → 132 BPM (1.0 BPM apart)", "2A → 3A: neighboring Camelot keys", "Energy rises by 6 points", "Matches the learned 32-bar transition neighborhood"]
+  },
+  {
+    "source": { "artist": "Artist 3", "bpm": 133, "key": "4A", "energy": 53 },
+    "target": { "artist": "Artist 7", "bpm": 137, "key": "8A", "energy": 77 },
+    "expected_total": 0.5503,
+    "expected_components": { "tempo": 0.5205, "harmony": 0.0561, "energy": 0.8674, "learned": 0.4653 },
+    "expected_explanation": ["133 → 137 BPM (4.0 BPM apart)", "4A → 8A: a deliberate harmonic jump", "Energy rises by 24 points", "Matches the learned 32-bar transition neighborhood"]
+  },
+  {
+    "source": { "artist": "Artist 8", "bpm": 138, "key": "9A", "energy": 83 },
+    "target": { "artist": "Artist 4", "bpm": 134, "key": "5A", "energy": 59 },
+    "expected_total": 0.5507,
+    "expected_components": { "tempo": 0.5205, "harmony": 0.0561, "energy": 0.8674, "learned": 0.466 },
+    "expected_explanation": ["138 → 134 BPM (4.0 BPM apart)", "9A → 5A: a deliberate harmonic jump", "Energy settles by 24 points", "Matches the learned 32-bar transition neighborhood"]
+  }
+]
