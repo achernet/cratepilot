@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import threading
 import webbrowser
@@ -77,6 +78,10 @@ def _cache() -> Path:
 
 
 def _serve(library: Path) -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     try:
         import uvicorn
 

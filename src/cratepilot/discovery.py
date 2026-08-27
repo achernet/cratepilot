@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 from .identity import canonical_identity, split_version, stable_id
 from .models import (
@@ -19,6 +20,8 @@ from .planner import evaluate_readiness, generate_drafts
 from .providers import ProviderTrack, SimilarityProvider, VideoSearchProvider
 from .storage import Store
 from .youtube_scorer import score_youtube_results
+
+LOGGER = logging.getLogger(__name__)
 
 
 def legal_source_links(artist: str, title: str) -> tuple[dict[str, str], ...]:
@@ -132,7 +135,15 @@ class DiscoveryService:
         self.store.save_discovery_session(session)
         return session
 
-    def run(self, session_id: str) -> DiscoverySessionV1:
+    def run(
+        self,
+        session_id: str,
+        *,
+        progress_callback: Callable[[float, str], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> DiscoverySessionV1:
+        report = progress_callback or (lambda _progress, _message: None)
+        check_cancelled = cancel_check or (lambda: None)
         session = self.store.discovery_session(session_id)
         if not session:
             raise KeyError("Discovery session not found")
@@ -142,13 +153,19 @@ class DiscoveryService:
         track_ids: list[str] = []
         edge_ids: list[str] = []
         warnings: list[str] = []
+        LOGGER.info("Starting discovery %s with %d seeds and a %d-node cap", session.id, len(seeds), session.max_nodes)
         while queue and len(seen) < session.max_nodes:
+            check_cancelled()
             provider_track, depth, parent = queue.popleft()
             current = self.catalog.upsert(provider_track)
             if current.normalized_identity in seen:
                 continue
             seen.add(current.normalized_identity)
             track_ids.append(current.id)
+            report(
+                min(0.62, 0.04 + 0.58 * len(seen) / max(1, session.max_nodes)),
+                f"Discovered {len(seen):,} canonical tracks · graph depth {depth} · {len(queue):,} queued.",
+            )
             if parent:
                 edge = DiscoveryEdgeV1(
                     id=stable_id("edge", parent, current.id, provider_track.relationship), source_track_id=parent,
@@ -157,8 +174,6 @@ class DiscoveryService:
                 )
                 self.store.save_discovery_edge(edge)
                 edge_ids.append(edge.id)
-            if self._ready_count(session.readiness_target) >= session.readiness_target:
-                break
             if depth >= session.max_depth or self.similarity is None:
                 continue
             try:
@@ -170,8 +185,15 @@ class DiscoveryService:
                 if len(seen) + len(queue) >= session.max_nodes:
                     break
                 queue.append((neighbor, depth + 1, current.id))
-        candidates = self._build_candidates(track_ids, session.result_count, session.review_batch_size)
-        ready_plans = self._ready_plans(session.readiness_target)
+        report(0.65, f"Ranking up to {session.review_batch_size} mixable source candidates.")
+        candidates = self._build_candidates(
+            track_ids, session.result_count, session.review_batch_size,
+            progress_callback=report, cancel_check=check_cancelled,
+        )
+        report(0.84, "Evaluating strict draft readiness once against the analyzed library.")
+        ready_plans = self._ready_plans(
+            session.readiness_target, progress_callback=report, cancel_check=check_cancelled
+        )
         status = "ready" if len(ready_plans) >= session.readiness_target else "limit_reached"
         if status != "ready":
             warnings.append(
@@ -183,17 +205,33 @@ class DiscoveryService:
             warnings=tuple(warnings), progress=1.0,
         )
         self.store.save_discovery_session(updated)
+        LOGGER.info("Discovery %s finished with %d tracks and %d candidates", session.id, len(track_ids), len(candidates))
         return updated
 
-    def _build_candidates(self, track_ids: Sequence[str], result_count: int, batch_size: int) -> list[AcquisitionCandidateV1]:
+    def _build_candidates(
+        self,
+        track_ids: Sequence[str],
+        result_count: int,
+        batch_size: int,
+        *,
+        progress_callback: Callable[[float, str], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> list[AcquisitionCandidateV1]:
+        report = progress_callback or (lambda _progress, _message: None)
+        check_cancelled = cancel_check or (lambda: None)
         if self.video_search is None:
             return []
         candidates: list[AcquisitionCandidateV1] = []
-        for track_id in track_ids:
+        for track_index, track_id in enumerate(track_ids):
+            check_cancelled()
             track = self.store.catalog_track(track_id)
             if not track or track.assets or len(candidates) >= batch_size:
                 continue
             try:
+                report(
+                    0.65 + 0.17 * track_index / max(1, len(track_ids)),
+                    f"Searching versions for {track.artist} — {track.title}.",
+                )
                 results = self.video_search.search(track.artist, track.title, limit=result_count)
             except Exception:
                 continue
@@ -211,12 +249,26 @@ class DiscoveryService:
                     break
         return candidates
 
-    def _ready_plans(self, limit: int):
+    def _ready_plans(
+        self,
+        limit: int,
+        *,
+        progress_callback: Callable[[float, str], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ):
         tracks = self.store.tracks()
         if len(tracks) < 2:
             return []
         try:
-            drafts = generate_drafts(tracks, count=min(30, max(limit * 4, 3)))
+            drafts = generate_drafts(
+                tracks,
+                count=min(30, max(limit * 4, 3)),
+                progress_callback=(
+                    (lambda progress, message: progress_callback(0.84 + progress * 0.14, message))
+                    if progress_callback else None
+                ),
+                cancel_check=cancel_check,
+            )
         except Exception:
             return []
         accepted = []
@@ -227,6 +279,3 @@ class DiscoveryService:
                 if len(accepted) >= limit:
                     break
         return accepted
-
-    def _ready_count(self, limit: int) -> int:
-        return len(self._ready_plans(limit))

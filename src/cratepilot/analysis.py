@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .legacy import djmix
 from .models import CueSuggestionV1, FeatureContextV1, TrackAnalysisV1
 
-SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".aiff", ".aif"}
+SUPPORTED_EXTENSIONS = {
+    ".aac", ".ac3", ".aif", ".aiff", ".alac", ".amr", ".ape", ".au", ".caf",
+    ".dts", ".eac3", ".flac", ".m4a", ".m4b", ".mp2", ".mp3", ".mp4", ".mpc",
+    ".oga", ".ogg", ".opus", ".ra", ".tak", ".tta", ".wav", ".wave", ".webm",
+    ".wma", ".wv",
+}
+LOGGER = logging.getLogger(__name__)
 
 
 class AnalysisError(RuntimeError):
@@ -18,10 +25,12 @@ def scan_library(root: Path) -> list[Path]:
     root = root.expanduser().resolve()
     if not root.is_dir():
         raise AnalysisError(f"Music library does not exist or is not a folder: {root}")
-    return sorted(
+    matches = sorted(
         (path for path in root.rglob("*") if path.is_file() and path.suffix.casefold() in SUPPORTED_EXTENSIONS),
         key=lambda path: str(path).casefold(),
     )
+    LOGGER.info("Found %d supported audio files under %s", len(matches), root)
+    return matches
 
 
 def _context(value: djmix.AudioContext) -> FeatureContextV1:
@@ -85,12 +94,20 @@ def analyze_paths(
     cache_directory: Path,
     sample_rate: int = 22_050,
     context_seconds: float = 90.0,
+    progress_callback: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[TrackAnalysisV1]:
+    paths = tuple(paths)
+    report = progress_callback or (lambda _progress, _message: None)
+    check_cancelled = cancel_check or (lambda: None)
+    LOGGER.info("Analyzing %d audio files", len(paths))
     cache = djmix.AnalysisCache(cache_directory)
     analyses: list[TrackAnalysisV1] = []
     with tempfile.TemporaryDirectory(prefix="cratepilot-analysis-") as temporary:
         temporary_dir = Path(temporary)
-        for path in paths:
+        for index, path in enumerate(paths):
+            check_cancelled()
+            report(index / max(1, len(paths)), f"Analyzing {index + 1:,} of {len(paths):,}: {path.name}")
             try:
                 value = djmix.analyze_track(
                     path,
@@ -103,5 +120,6 @@ def analyze_paths(
             except (djmix.DjMixError, OSError, ValueError) as exc:
                 raise AnalysisError(str(exc)) from exc
             analyses.append(public_analysis(value))
+    report(0.99, f"Analyzed {len(analyses):,} tracks.")
+    LOGGER.info("Finished analyzing %d audio files", len(analyses))
     return analyses
-

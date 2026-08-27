@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { CSSProperties, DragEvent, useMemo, useRef, useState } from 'react';
+import { CSSProperties, DragEvent, PointerEvent as ReactPointerEvent, useMemo, useRef, useState } from 'react';
 import { scoreTransition } from './lib/scorer';
 
 type Track = { id: string; artist: string; title: string; bpm: number; key: string; energy: number };
@@ -28,6 +28,7 @@ const discoveryFixture: DiscoveryNode[] = catalog.map((track, index) => ({
   owned: index === 0,
   score: [100, 94, 91, 88, 86, 82][index],
 }));
+const fixturePositions = [[44, 42], [70, 22], [73, 69], [20, 24], [19, 72], [46, 80]];
 
 function keyFrequency(key: string) {
   return 98 * 2 ** ((Number.parseInt(key, 10) - 1) / 12);
@@ -100,6 +101,10 @@ export default function Home() {
   const [reviewed, setReviewed] = useState<Set<string>>(new Set());
   const [crateBuilt, setCrateBuilt] = useState(false);
   const [visualizer, setVisualizer] = useState(false);
+  const [graphFocus, setGraphFocus] = useState('eternal-light');
+  const [reviewSort, setReviewSort] = useState<'track' | 'score'>('score');
+  const [visualizerScene, setVisualizerScene] = useState(0);
+  const [signalPointer, setSignalPointer] = useState({ x: 50, y: 50 });
   const dragIndex = useRef<number | null>(null);
 
   const tracks = useMemo(() => order.map(id => catalog.find(track => track.id === id)!), [order]);
@@ -108,6 +113,8 @@ export default function Home() {
   const active = transitions[activeIndex];
   const outgoing = tracks[activeIndex];
   const incoming = tracks[activeIndex + 1];
+  const focusedGraphTrack = discoveryFixture.find(node => node.id === graphFocus) || discoveryFixture[0];
+  const visibleReview = useMemo(() => [...discoveryFixture.slice(1, discovered)].sort((a, b) => reviewSort === 'score' ? b.score - a.score : `${a.artist} ${a.title}`.localeCompare(`${b.artist} ${b.title}`)), [discovered, reviewSort]);
 
   const commit = (next: string[], message: string) => {
     setHistory(previous => [...previous.slice(-9), order]);
@@ -185,8 +192,8 @@ export default function Home() {
         <p className="discovery-intro">This recruiter-safe simulation uses only the credited catalog below. Local mode can resolve Spotify metadata, recognize your own files, search two graph hops, and prepare a reviewed acquisition batch; the public site makes no provider calls and downloads nothing.</p>
         <div className="discovery-grid">
           <div className="seed-console"><div className="panel-label"><span>01 · Seed</span><b>Owned track</b></div><article className="seed-card"><span className="signal-dot" /><div><strong>Eternal Light</strong><small>Soundwave Sphere · local analysis</small></div><span className="key-pill">8A</span></article><dl><div><dt>2</dt><dd>graph hops</dd></div><div><dt>150</dt><dd>node cap</dd></div><div><dt>30</dt><dd>review max</dd></div></dl><button className="button button-primary" type="button" disabled={discovered === discoveryFixture.length} onClick={() => setDiscovered(value => Math.min(discoveryFixture.length, value + 2))}>{discovered === 1 ? 'Expand related tracks' : discovered < discoveryFixture.length ? 'Continue discovery' : 'Discovery limits reached'}</button></div>
-          <div className="graph-console"><div className="panel-label"><span>02 · Provenance graph</span><b>{discovered} canonical nodes</b></div><div className="fixture-graph" aria-label="Interactive track relationship graph">{discoveryFixture.slice(0, discovered).map((node, index) => <button key={node.id} className={`graph-node node-${index} ${node.owned ? 'owned' : ''}`} title={`${node.artist} · ${node.relation}`} type="button"><span>{node.title}</span><small>{node.score}%</small></button>)}</div><div className="graph-legend"><span><i className="lime" /> seed</span><span><i className="cyan" /> already owned</span><span><i /> related evidence</span></div></div>
-          <aside className="review-console"><div className="panel-label"><span>03 · Review</span><b>{reviewed.size} selected</b></div>{discoveryFixture.slice(1, discovered).map(node => <label className="review-row" key={node.id}><input type="checkbox" checked={reviewed.has(node.id)} onChange={() => setReviewed(current => { const next = new Set(current); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next; })} /><div><strong>{node.title}</strong><small>{node.relation} · duration cluster fit</small></div><b>{node.score}</b></label>)}{discovered === 1 && <div className="review-empty">Expand the graph to rank potential crate additions.</div>}<button className="button button-primary" disabled={reviewed.size < 3} type="button" onClick={() => { setCrateBuilt(true); setNotice('Smart crate materialized · 3 distinct short demo drafts ready'); }}>Build smart crate</button><button className="button button-quiet visualizer-button" type="button" onClick={() => setVisualizer(true)}>Open signal visualizer</button></aside>
+          <div className="graph-console"><div className="panel-label"><span>02 · Provenance graph</span><b>{discovered} canonical nodes</b></div><div className="fixture-graph" aria-label="Interactive track relationship graph"><svg className="fixture-edges" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{discoveryFixture.slice(1, discovered).map((node, index) => <line key={node.id} x1={fixturePositions[0][0]} y1={fixturePositions[0][1]} x2={fixturePositions[index + 1][0]} y2={fixturePositions[index + 1][1]} className={graphFocus === node.id || graphFocus === 'eternal-light' ? 'active' : ''} />)}</svg>{discoveryFixture.slice(0, discovered).map((node, index) => <button key={node.id} className={`graph-node node-${index} ${node.owned ? 'owned' : ''} ${graphFocus === node.id ? 'is-focused' : ''} ${graphFocus !== node.id && graphFocus !== 'eternal-light' && index !== 0 ? 'is-dimmed' : ''}`} title={`${node.artist} · ${node.relation}`} type="button" onClick={() => setGraphFocus(node.id)}><span>{node.title}</span><small>{node.score}%</small></button>)}</div><div className="graph-inspector"><strong>{focusedGraphTrack.artist} — {focusedGraphTrack.title}</strong><small>{focusedGraphTrack.relation} · {focusedGraphTrack.bpm} BPM · {focusedGraphTrack.key} · score {focusedGraphTrack.score}</small></div><div className="graph-legend"><span><i className="lime" /> seed</span><span><i className="cyan" /> already owned</span><span><i /> click a node to inspect</span></div></div>
+          <aside className="review-console"><div className="panel-label"><span>03 · Best mixable versions</span><b>{reviewed.size} selected</b></div><div className="review-tools"><button type="button" onClick={() => setReviewed(new Set(visibleReview.map(node => node.id)))}>Select all</button><button type="button" onClick={() => setReviewed(new Set())}>Clear selection</button><button type="button" onClick={() => { setReviewed(new Set()); setDiscovered(1); }}>Clear panel</button></div><div className="review-head"><button type="button" onClick={() => setReviewSort('track')}>Artist / version {reviewSort === 'track' ? '↑' : '↕'}</button><button type="button" onClick={() => setReviewSort('score')}>Score {reviewSort === 'score' ? '↓' : '↕'}</button></div><div className="review-scroll">{visibleReview.map(node => <label className="review-row" key={node.id}><input type="checkbox" checked={reviewed.has(node.id)} onChange={() => setReviewed(current => { const next = new Set(current); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next; })} /><div><strong>{node.artist} — {node.title}</strong><small>{node.relation} · {node.bpm} BPM · {node.key}</small></div><b>{node.score}</b></label>)}{discovered === 1 && <div className="review-empty">Expand the graph to rank potential crate additions.</div>}</div><button className="button button-primary" disabled={reviewed.size < 3} type="button" onClick={() => { setCrateBuilt(true); setNotice('Smart crate materialized · 3 distinct short demo drafts ready'); }}>Build smart crate</button><button className="button button-quiet visualizer-button" type="button" onClick={() => setVisualizer(true)}>Open live crate signal</button></aside>
         </div>
       </section>
 
@@ -242,7 +249,7 @@ export default function Home() {
 
       <section className="credits" id="credits"><div><p className="eyebrow"><span /> Demo catalog</p><h2>Cleared, credited, transparent.</h2></div><div className="credit-list">{catalog.map(track => <a key={track.id} href={track.id === 'eternal-light' ? 'https://freemusicarchive.org/music/soundwave-sphere/single/eternal-lightmp3/' : ({ liberation: 'https://ccmixter.org/files/Karstenholymoly/61513', seven: 'https://ccmixter.org/files/bwatts/39793', ready: 'https://ccmixter.org/files/AnalogByNature/41473', language: 'https://ccmixter.org/files/evenafter/42087', 'summer-house': 'https://ccmixter.org/files/Robbero/46630' } as Record<string, string>)[track.id]}><span>{track.title}</span><small>{track.artist} · CC BY ↗</small></a>)}</div></section>
       <footer><a className="brand" href="#top"><span className="brand-mark">CP</span><span>CratePilot</span></a><p>Designed and engineered by Alex Chernetz · 2026</p><div><Link href="/case-study">Case study</Link><a href="https://github.com/achernet/cratepilot">Source</a></div></footer>
-      {visualizer && <div className="public-visualizer" role="dialog" aria-modal="true" aria-label="Signal visualizer"><div className="visualizer-field">{Array.from({ length: 48 }, (_, index) => <i key={index} style={{ '--i': index } as CSSProperties} />)}</div><div className="visualizer-copy"><span>CRATEPILOT SIGNAL / AURORA GRID</span><b>Eternal Light · 128 BPM · 8A</b></div><button className="button button-quiet" type="button" onClick={() => setVisualizer(false)}>Close visualizer</button></div>}
+      {visualizer && <div className={`public-visualizer scene-${visualizerScene}`} role="dialog" aria-modal="true" aria-label="Signal visualizer" style={{ '--pointer-x': `${signalPointer.x}%`, '--pointer-y': `${signalPointer.y}%` } as CSSProperties} onPointerMove={(event: ReactPointerEvent<HTMLDivElement>) => { const bounds = event.currentTarget.getBoundingClientRect(); setSignalPointer({ x: (event.clientX - bounds.left) / bounds.width * 100, y: (event.clientY - bounds.top) / bounds.height * 100 }); }} onPointerDown={() => setVisualizerScene(scene => (scene + 1) % 3)}><div className="visualizer-field">{Array.from({ length: 64 }, (_, index) => <i key={index} style={{ '--i': index, '--score': discoveryFixture[index % discovered].score / 100 } as CSSProperties} />)}</div><div className="visualizer-copy"><span>CRATEPILOT SIGNAL / SCENE {visualizerScene + 1}</span><b>{focusedGraphTrack.title} · {focusedGraphTrack.bpm} BPM · {focusedGraphTrack.key}</b><small>Move to steer · click to change scene · driven by {discovered} graph nodes</small></div><button className="button button-quiet" type="button" onPointerDown={event => event.stopPropagation()} onClick={() => setVisualizer(false)}>Close visualizer</button></div>}
     </main>
   );
 }

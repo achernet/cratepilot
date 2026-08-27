@@ -16,5 +16,6 @@ def test_schema_and_round_trip(tmp_path: Path):
     restored = store.plan(plan.id)
     assert restored == plan
     store.update_job("job", "analysis", "complete", 1.0, "done", {"tracks": 2})
+    store.append_job_log("job", "info", "Analyzed two tracks")
     assert store.job("job")["result"] == {"tracks": 2}
-
+    assert store.job("job")["logs"][0]["message"] == "Analyzed two tracks"

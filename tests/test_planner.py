@@ -95,6 +95,24 @@ def test_draft_count_is_configurable_and_bounded():
         generate_drafts([track(1), track(2)], count=31)
 
 
+def test_beam_search_reports_progress_and_checks_for_cancellation():
+    updates: list[tuple[float, str]] = []
+    checks = 0
+
+    def cancel_check() -> None:
+        nonlocal checks
+        checks += 1
+
+    generate_drafts(
+        [track(index) for index in range(10)], count=1,
+        progress_callback=lambda progress, message: updates.append((progress, message)),
+        cancel_check=cancel_check,
+    )
+    assert checks > 5
+    assert updates[0][0] < updates[-1][0]
+    assert any("transition scores cached" in message for _, message in updates)
+
+
 def test_strict_readiness_checks_transition_energy_and_diversity():
     import dataclasses
 

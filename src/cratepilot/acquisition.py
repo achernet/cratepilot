@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import logging
 import re
 import shutil
 import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 from platformdirs import user_data_path
 
@@ -17,6 +18,7 @@ from .models import AcquisitionJobV1, LocalAssetV1
 from .storage import Store
 
 ACKNOWLEDGEMENT_VERSION = "permissive-acquisition-v1"
+LOGGER = logging.getLogger(__name__)
 
 
 class AcquisitionError(RuntimeError):
@@ -62,8 +64,8 @@ class AcquisitionService:
     def approve(self, candidate_ids: Sequence[str]) -> AcquisitionJobV1:
         if not candidate_ids:
             raise AcquisitionError("At least one candidate must be approved.")
-        if len(candidate_ids) > 30:
-            raise AcquisitionError("An acquisition review batch cannot exceed 30 candidates.")
+        if len(candidate_ids) > 100:
+            raise AcquisitionError("An acquisition review batch cannot exceed 100 candidates.")
         for candidate_id in candidate_ids:
             if self.store.candidate(candidate_id) is None:
                 raise AcquisitionError(f"Unknown candidate: {candidate_id}")
@@ -75,7 +77,15 @@ class AcquisitionService:
         self.store.save_acquisition_job(job)
         return job
 
-    def run(self, job: AcquisitionJobV1) -> AcquisitionJobV1:
+    def run(
+        self,
+        job: AcquisitionJobV1,
+        *,
+        progress_callback: Callable[[float, str], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> AcquisitionJobV1:
+        report = progress_callback or (lambda _progress, _message: None)
+        check_cancelled = cancel_check or (lambda: None)
         if not self.is_acknowledged() or job.acknowledgement_version != ACKNOWLEDGEMENT_VERSION:
             raise AcquisitionError("Permissive acquisition is disabled. Use the legal source links or acknowledge it locally.")
         attempts: list[dict[str, Any]] = []
@@ -86,12 +96,19 @@ class AcquisitionService:
         for candidate in candidates:
             if candidate:
                 by_track.setdefault(candidate.catalog_track_id, []).append(candidate)
-        for track_id, choices in by_track.items():
+        LOGGER.info("Running acquisition %s for %d canonical tracks", job.id, len(by_track))
+        for track_index, (track_id, choices) in enumerate(by_track.items()):
+            check_cancelled()
             track = self.store.catalog_track(track_id)
             if not track:
                 continue
+            report(
+                0.05 + 0.88 * track_index / max(1, len(by_track)),
+                f"Acquiring and verifying {track.artist} — {track.title}.",
+            )
             success = False
             for candidate in sorted(choices, key=lambda item: (item.rank, -item.total_score))[:3]:
+                check_cancelled()
                 try:
                     generated = self._acquire_candidate(candidate.source_url, track.artist, track.title, track.year)
                     verification = self.verifier.verify(
@@ -127,6 +144,8 @@ class AcquisitionService:
             quarantine_paths=tuple(quarantine), message=f"Created {len(assets) // 2} verified DJ derivatives.",
         )
         self.store.save_acquisition_job(updated_job)
+        LOGGER.info("Acquisition %s finished with %d verified derivatives", job.id, len(assets) // 2)
+        report(0.96, updated_job.message)
         return updated_job
 
     def _acquire_candidate(self, url: str, artist: str, title: str, year: int | None) -> tuple[Path, str]:
@@ -182,4 +201,3 @@ class AcquisitionService:
         target = self.quarantine_root / f"{candidate_id}-{_sha256(source)[:12]}{source.suffix.lower()}"
         shutil.move(str(source), target)
         return target
-

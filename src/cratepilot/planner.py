@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 from .legacy.djmix import camelot_distance
 from .models import SetPlanV1, TrackAnalysisV1, TransitionPlanV1
 
 FIRST_BOOTH_CURVE = (0.35, 0.50, 0.78, 1.00, 0.84)
 WEAK_TRANSITION_THRESHOLD = 0.45
+LOGGER = logging.getLogger(__name__)
 
 
 class PlanningError(RuntimeError):
@@ -165,6 +167,8 @@ def generate_drafts(
     locked_positions: Mapping[int, str] | None = None,
     beam_width: int = 50,
     count: int = 3,
+    progress_callback: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[SetPlanV1]:
     if not 1 <= count <= 30:
         raise PlanningError("Draft count must be between 1 and 30.")
@@ -177,23 +181,43 @@ def generate_drafts(
         raise PlanningError("A locked track is not present in the library.")
     minimum_seconds = target_duration_seconds * 0.93
     maximum_seconds = target_duration_seconds * 1.07
+    report = progress_callback or (lambda _progress, _message: None)
+    check_cancelled = cancel_check or (lambda: None)
+    LOGGER.info(
+        "Generating %d drafts from %d tracks with beam width %d", count, len(library), beam_width
+    )
+    report(0.02, f"Preparing {len(library):,} analyzed tracks for beam search.")
     beams: list[_Beam] = []
-    for track in library:
+    for index, track in enumerate(library):
+        if index % 100 == 0:
+            check_cancelled()
         sequence = (track,)
         if _locks_allow(sequence, locks):
             beams.append(_Beam(sequence, (), _sequence_score(sequence, (), target_seconds=target_duration_seconds)))
     completed: list[_Beam] = []
     max_tracks = min(14, len(library))
+    transition_cache: dict[tuple[str, str], TransitionPlanV1] = {}
+    depth = 1
     while beams:
+        check_cancelled()
+        report(
+            min(0.92, 0.05 + 0.87 * depth / max_tracks),
+            f"Exploring position {depth + 1} of up to {max_tracks} · {len(beams):,} active paths · "
+            f"{len(transition_cache):,} transition scores cached.",
+        )
         next_beams: list[_Beam] = []
-        for beam in beams:
+        for beam_index, beam in enumerate(beams):
+            if beam_index % 5 == 0:
+                check_cancelled()
             duration = plan_duration(beam.sequence, beam.transitions)
             if minimum_seconds <= duration <= maximum_seconds:
                 completed.append(beam)
             if len(beam.sequence) >= max_tracks or duration > maximum_seconds:
                 continue
             used = {item.id for item in beam.sequence}
-            for candidate in library:
+            for candidate_index, candidate in enumerate(library):
+                if candidate_index % 200 == 0:
+                    check_cancelled()
                 if candidate.id in used:
                     continue
                 if beam.sequence[-1].artist and candidate.artist and beam.sequence[-1].artist.casefold() == candidate.artist.casefold():
@@ -201,16 +225,22 @@ def generate_drafts(
                 sequence = (*beam.sequence, candidate)
                 if not _locks_allow(sequence, locks):
                     continue
-                transition = score_transition(beam.sequence[-1], candidate)
+                transition_key = (beam.sequence[-1].id, candidate.id)
+                transition = transition_cache.get(transition_key)
+                if transition is None:
+                    transition = score_transition(beam.sequence[-1], candidate)
+                    transition_cache[transition_key] = transition
                 transitions = (*beam.transitions, transition)
                 score = _sequence_score(sequence, transitions, target_seconds=target_duration_seconds)
                 next_beams.append(_Beam(sequence, transitions, score))
         next_beams.sort(key=lambda item: (-item.score, tuple(track.id for track in item.sequence)))
         beams = next_beams[:beam_width]
+        depth += 1
         if len(completed) >= count * 12 and beams and len(beams[0].sequence) > 8:
             break
     if not completed:
         completed = beams
+    report(0.95, f"Ranking {len(completed):,} complete paths and selecting distinct drafts.")
     completed.sort(
         key=lambda item: (
             abs(plan_duration(item.sequence, item.transitions) - target_duration_seconds),
@@ -247,6 +277,8 @@ def generate_drafts(
             break
     if not plans:
         raise PlanningError("The selected library cannot satisfy the requested duration and locks.")
+    LOGGER.info("Generated %d drafts after scoring %d unique transitions", len(plans), len(transition_cache))
+    report(0.99, f"Selected {len(plans)} drafts from {len(completed):,} complete paths.")
     return plans
 
 

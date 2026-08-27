@@ -27,7 +27,7 @@ from .models import (
     track_from_dict,
 )
 
-DATABASE_VERSION = 2
+DATABASE_VERSION = 3
 
 
 class Store:
@@ -62,6 +62,14 @@ class Store:
                 result TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS job_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS job_logs_job_idx ON job_logs(job_id, id);
             CREATE TABLE IF NOT EXISTS catalog_tracks (
                 id TEXT PRIMARY KEY, normalized_identity TEXT NOT NULL, payload TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -167,7 +175,19 @@ class Store:
             return None
         value = dict(row)
         value["result"] = json.loads(value["result"]) if value["result"] else None
+        value["logs"] = [
+            dict(item) for item in self.connection.execute(
+                "SELECT level, message, created_at FROM job_logs WHERE job_id=? ORDER BY id", (job_id,)
+            ).fetchall()
+        ]
         return value
+
+    def append_job_log(self, job_id: str, level: str, message: str) -> None:
+        self.connection.execute(
+            "INSERT INTO job_logs(job_id, level, message) VALUES (?, ?, ?)",
+            (job_id, level, message),
+        )
+        self.connection.commit()
 
     def save_catalog_track(self, track: CatalogTrackV2) -> None:
         self._save_payload("catalog_tracks", ("normalized_identity",), (track.id, track.normalized_identity), track)

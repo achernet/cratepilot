@@ -4,7 +4,7 @@ import asyncio
 import json
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -17,6 +17,7 @@ from .crates import materialize_crate, write_m3u8
 from .discovery import Catalog, DiscoveryService
 from .doctor import doctor_report
 from .exporter import write_rekordbox_package
+from .file_picker import FilePickerError, choose_audio_file, choose_playlist_file, import_into_library
 from .identity import stable_id
 from .jobs import JobRunner
 from .models import SmartCrateV1, to_dict
@@ -57,7 +58,14 @@ def validate_paths_payload(value: Any) -> list[str] | None:
     return value
 
 
-def create_app(library_root: Path, *, store: Store | None = None, web_directory: Path | None = None) -> FastAPI:
+def create_app(
+    library_root: Path,
+    *,
+    store: Store | None = None,
+    web_directory: Path | None = None,
+    file_picker: Callable[[Path], Path | None] | None = None,
+    playlist_picker: Callable[[Path], Path | None] | None = None,
+) -> FastAPI:
     state = LocalState(library_root, store=store)
     app = FastAPI(title="CratePilot Local API", version="1.0.0", docs_url=None, redoc_url=None)
     app.state.cratepilot = state
@@ -83,14 +91,68 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
     def library() -> dict[str, Any]:
         return {"tracks": [to_dict(track) for track in state.store.tracks()]}
 
+    @app.post("/api/v1/library/browse")
+    async def browse_library_file() -> dict[str, Any]:
+        picker = file_picker or choose_audio_file
+        try:
+            selected = picker(state.library_root)
+            if selected is None:
+                return {"cancelled": True}
+            imported, copied = import_into_library(selected, state.library_root)
+        except FilePickerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "cancelled": False,
+            "path": str(imported),
+            "display_name": imported.name,
+            "copied_to_library": copied,
+        }
+
+    @app.post("/api/v1/library/browse-playlist")
+    async def browse_playlist() -> dict[str, Any]:
+        picker = playlist_picker or choose_playlist_file
+        try:
+            selected = picker(state.library_root)
+            if selected is None:
+                return {"cancelled": True}
+            selected = selected.expanduser().resolve()
+            if selected.suffix.casefold() not in {".m3u", ".m3u8"} or not selected.is_file():
+                raise FilePickerError("Choose an existing .m3u or .m3u8 playlist.")
+            entries: set[Path] = set()
+            for raw_line in selected.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+                value = raw_line.strip()
+                if not value or value.startswith("#") or "://" in value:
+                    continue
+                path = Path(value).expanduser()
+                path = (selected.parent / path).resolve() if not path.is_absolute() else path.resolve()
+                try:
+                    path.relative_to(state.library_root)
+                except ValueError:
+                    continue
+                entries.add(path)
+            by_path = {Path(track.path).resolve(): track.id for track in state.store.tracks() if track.path}
+            track_ids = sorted(by_path[path] for path in entries if path in by_path)
+        except (FilePickerError, OSError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "cancelled": False, "display_name": selected.name, "entry_count": len(entries),
+            "track_ids": track_ids, "matched_count": len(track_ids),
+        }
+
     @app.post("/api/v1/library/analyze")
     async def analyze(request: Request) -> dict[str, str]:
         payload = await request.json()
         supplied = validate_paths_payload(payload.get("paths"))
 
-        def operation() -> dict[str, Any]:
+        def operation(context) -> dict[str, Any]:
             paths = [state.validate_path(item) for item in supplied] if supplied else scan_library(state.library_root)
-            tracks = analyze_paths(paths, cache_directory=state.cache_directory)
+            context.report(0.02, f"Found {len(paths):,} supported audio files.")
+            tracks = analyze_paths(
+                paths,
+                cache_directory=state.cache_directory,
+                progress_callback=lambda progress, message: context.report(0.03 + progress * 0.94, message),
+                cancel_check=context.check_cancelled,
+            )
             state.store.save_tracks(tracks)
             Catalog(state.store).import_analyses(tracks)
             return {"tracks": [to_dict(track) for track in tracks]}
@@ -98,18 +160,30 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
         return {"job_id": state.jobs.submit("analysis", operation)}
 
     @app.post("/api/v1/plans/generate")
-    async def generate(request: Request) -> dict[str, Any]:
+    async def generate(request: Request) -> dict[str, str]:
         payload = await request.json()
         target_minutes = float(payload.get("target_minutes", 45.0))
-        drafts = generate_drafts(
-            state.store.tracks(),
-            target_duration_seconds=target_minutes * 60.0,
-            locked_positions={int(key): value for key, value in payload.get("locked_positions", {}).items()},
-            count=int(payload.get("count", 3)),
-        )
-        for draft in drafts:
-            state.store.save_plan(draft)
-        return {"plans": [to_dict(item) for item in drafts]}
+        requested_ids = {str(item) for item in payload.get("track_ids", [])}
+
+        def operation(context) -> dict[str, Any]:
+            library = state.store.tracks()
+            if requested_ids:
+                library = [track for track in library if track.id in requested_ids]
+                context.report(0.01, f"Playlist filter selected {len(library):,} analyzed tracks.")
+            drafts = generate_drafts(
+                library,
+                target_duration_seconds=target_minutes * 60.0,
+                locked_positions={int(key): value for key, value in payload.get("locked_positions", {}).items()},
+                count=int(payload.get("count", 3)),
+                progress_callback=context.report,
+                cancel_check=context.check_cancelled,
+            )
+            for draft in drafts:
+                context.check_cancelled()
+                state.store.save_plan(draft)
+            return {"plans": [to_dict(item) for item in drafts]}
+
+        return {"job_id": state.jobs.submit("planning", operation)}
 
     @app.get("/api/v1/catalog")
     async def catalog() -> dict[str, Any]:
@@ -156,7 +230,7 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
         service = DiscoveryService(state.store)
         session = service.create_session(
             seeds, max_depth=int(payload.get("max_depth", 2)), max_nodes=int(payload.get("max_nodes", 150)),
-            review_batch_size=int(payload.get("review_batch_size", 30)),
+            review_batch_size=int(payload.get("review_batch_size", payload.get("result_count", 30))),
             readiness_target=int(payload.get("readiness_target", 8)), result_count=int(payload.get("result_count", 30)),
         )
         return {"session": to_dict(session)}
@@ -166,10 +240,11 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
         if state.store.discovery_session(session_id) is None:
             raise HTTPException(status_code=404, detail="Discovery session not found.")
 
-        def operation() -> dict[str, Any]:
+        def operation(context) -> dict[str, Any]:
+            context.report(0.08, "Expanding provider relationships and merging canonical identities.")
             session = DiscoveryService(
                 state.store, similarity=ShazamRelatedProvider(), video_search=YtDlpSearchProvider()
-            ).run(session_id)
+            ).run(session_id, progress_callback=context.report, cancel_check=context.check_cancelled)
             return {"session": to_dict(session)}
 
         return {"job_id": state.jobs.submit("discovery", operation)}
@@ -183,6 +258,10 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
 
     def acquisition_service() -> AcquisitionService:
         return AcquisitionService(state.store, verifier=ShazamMusicBrainzVerifier())
+
+    @app.get("/api/v1/acquisition/acknowledgement")
+    async def get_acquisition_acknowledgement() -> dict[str, bool]:
+        return {"accepted": acquisition_service().is_acknowledged()}
 
     @app.put("/api/v1/acquisition/acknowledgement")
     async def acquisition_acknowledgement(request: Request) -> dict[str, bool]:
@@ -209,8 +288,12 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
         if value is None:
             raise HTTPException(status_code=404, detail="Acquisition job not found.")
 
-        def operation() -> dict[str, Any]:
-            return {"acquisition": to_dict(acquisition_service().run(value))}
+        def operation(context) -> dict[str, Any]:
+            context.report(0.05, f"Starting reviewed acquisition for {len(value.candidate_ids)} candidates.")
+            result = acquisition_service().run(
+                value, progress_callback=context.report, cancel_check=context.check_cancelled
+            )
+            return {"acquisition": to_dict(result)}
 
         return {"job_id": state.jobs.submit("acquisition", operation)}
 
@@ -279,11 +362,14 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
         output = Path(payload["output_directory"]).expanduser().resolve()
         render_reference = bool(payload.get("render_reference", True))
 
-        def operation() -> dict[str, Any]:
+        def operation(context) -> dict[str, Any]:
+            context.report(0.05, "Staging sanitized track copies and playlist metadata.")
             library = {track.id: track for track in state.store.tracks()}
             manifest = write_rekordbox_package(
                 plan, library, output, render_reference=render_reference, analysis_cache=state.cache_directory
             )
+            context.check_cancelled()
+            context.report(0.95, "Finalizing checksums and the Rekordbox handoff manifest.")
             return {"manifest": to_dict(manifest)}
 
         return {"job_id": state.jobs.submit("export", operation)}
@@ -294,6 +380,12 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
         if value is None:
             raise HTTPException(status_code=404, detail="Job not found.")
         return value
+
+    @app.post("/api/v1/jobs/{job_id}/cancel")
+    async def cancel_job(job_id: str) -> dict[str, bool]:
+        if state.store.job(job_id) is None:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return {"cancelled": state.jobs.cancel(job_id)}
 
     @app.get("/api/v1/jobs/{job_id}/events")
     async def job_events(job_id: str):
@@ -308,7 +400,7 @@ def create_app(library_root: Path, *, store: Store | None = None, web_directory:
                 if encoded != last:
                     yield f"data: {encoded}\n\n"
                     last = encoded
-                if value["status"] in {"complete", "failed"}:
+                if value["status"] in {"complete", "failed", "cancelled"}:
                     return
                 await asyncio.sleep(0.35)
 

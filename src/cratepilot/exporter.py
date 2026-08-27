@@ -4,6 +4,7 @@ import csv
 import datetime as dt
 import hashlib
 import html
+import logging
 import re
 import shutil
 import tempfile
@@ -12,6 +13,8 @@ from typing import Mapping
 
 from .legacy import djmix
 from .models import ExportManifestV1, SetPlanV1, TrackAnalysisV1, write_json
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ExportError(RuntimeError):
@@ -82,6 +85,7 @@ def write_rekordbox_package(
     analysis_cache: Path | None = None,
 ) -> ExportManifestV1:
     output_directory = output_directory.expanduser().resolve()
+    LOGGER.info("Exporting plan %s with %d tracks to %s", plan.id, len(plan.track_ids), output_directory)
     if output_directory.exists() and any(output_directory.iterdir()):
         raise ExportError(f"Export directory is not empty: {output_directory}")
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -156,6 +160,7 @@ def write_rekordbox_package(
         rekordbox_checklist=REKORDBOX_CHECKLIST,
     )
     write_json(output_directory / "export-manifest.json", manifest)
+    LOGGER.info("Completed Rekordbox export %s with %d generated files", plan.id, len(files))
     return manifest
 
 

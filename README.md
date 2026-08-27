@@ -25,6 +25,8 @@ cratepilot --library "D:\Music\Trance"
 
 CratePilot opens at 127.0.0.1 with a per-launch session token. Analysis and rendered data live in the platform user-data/cache directories. Source audio is read-only.
 
+The local interface uses native file dialogs for seeds. A file selected outside the active library is copied into it without changing the original. Long analysis, discovery, planning, acquisition, and export jobs show progress and timestamped logs and can be cancelled at safe checkpoints. Before planning a very large library, use the optional M3U/M3U8 filter to restrict the candidate pool; playlist entries outside the selected library are ignored.
+
 Useful automation commands:
 
 ~~~text
@@ -47,7 +49,7 @@ See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for the complete Windows and 
 
 ## What the planner optimizes
 
-Bounded beam search returns 1–30 deterministic drafts. Its objective is 70% mean transition compatibility, 20% fit to the requested energy curve, 5% final-duration fit after overlaps, and 5% artist spacing. Strict readiness additionally requires 42–48 minutes, no transition warning, at least 0.55 mean compatibility, energy error no greater than 20 points, artist spacing, and no more than 0.75 Jaccard overlap with another counted draft.
+Bounded beam search returns 1–30 deterministic drafts. Its objective is 70% mean transition compatibility, 20% fit to the requested energy curve, 5% final-duration fit after overlaps, and 5% artist spacing. Transition scores are cached within a planning run, and progress is reported at every beam depth so large libraries remain observable and cancellable. Strict readiness additionally requires 42–48 minutes, no transition warning, at least 0.55 mean compatibility, energy error no greater than 20 points, artist spacing, and no more than 0.75 Jaccard overlap with another counted draft.
 
 Transition compatibility explains tempo, Camelot harmony, energy, low-end balance, timbre, rhythm, and the learned-neighbor contribution. Locked tracks and user ordering are hard constraints. Manual changes are warned on, never silently undone.
 
