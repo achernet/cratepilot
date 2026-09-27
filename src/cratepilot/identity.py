@@ -1,3 +1,5 @@
+"""Normalize music metadata into canonical identities and stable opaque IDs."""
+
 from __future__ import annotations
 
 import hashlib
@@ -10,11 +12,15 @@ _NON_WORD = re.compile(r"[^a-z0-9]+")
 
 
 def normalize_text(value: str) -> str:
+    """Fold text to comparable ASCII lowercase tokens."""
+
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().casefold()
     return _NON_WORD.sub(" ", value).strip()
 
 
 def split_version(title: str) -> tuple[str, str | None]:
+    """Separate a recognized mix/version suffix from a base title."""
+
     match = _VERSION.search(title)
     if not match:
         return title.strip(), None
@@ -25,6 +31,8 @@ def split_version(title: str) -> tuple[str, str | None]:
 
 
 def canonical_identity(artist: str, title: str, version: str | None = None) -> str:
+    """Build the normalized artist/title/version catalog identity."""
+
     base_title, inferred_version = split_version(title)
     version = version or inferred_version or ""
     clean_title = _NOISE.sub("", base_title)
@@ -32,6 +40,7 @@ def canonical_identity(artist: str, title: str, version: str | None = None) -> s
 
 
 def stable_id(prefix: str, *parts: str) -> str:
+    """Derive a short deterministic identifier from semantic input parts."""
+
     digest = hashlib.sha256("\x1f".join(parts).encode()).hexdigest()[:20]
     return f"{prefix}_{digest}"
-

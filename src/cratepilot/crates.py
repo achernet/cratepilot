@@ -1,14 +1,26 @@
+"""Evaluate dynamic library filters ("smart crates") and write M3U8 files.
+
+A smart crate is a saved query over catalog metadata and audio analysis. Its
+membership is recomputed from rules, then adjusted by explicit include/exclude
+track overrides; it is not a folder and does not move or copy source audio.
+"""
+
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 from pathlib import Path
 from typing import Any, Iterable
 
 from .models import CatalogTrackV2, SmartCrateV1, TrackAnalysisV1
 
+LOGGER = logging.getLogger(__name__)
+
 
 class CrateRuleError(ValueError):
+    """Raised for an unsupported or malformed smart-crate rule."""
+
     pass
 
 
@@ -45,6 +57,10 @@ def materialize_crate(
     catalog: Iterable[CatalogTrackV2],
     analyses: Iterable[TrackAnalysisV1],
 ) -> SmartCrateV1:
+    """Recompute a smart crate's ordered membership from rules and overrides."""
+
+    catalog = tuple(catalog)
+    analyses = tuple(analyses)
     analysis_by_id = {item.id: item for item in analyses}
     values: list[tuple[CatalogTrackV2, TrackAnalysisV1 | None]] = []
     excluded = set(crate.exclude_track_ids)
@@ -67,10 +83,21 @@ def materialize_crate(
         key=lambda pair: (_field(pair[0], pair[1], crate.order_by) is None, _field(pair[0], pair[1], crate.order_by), pair[0].id),
         reverse=crate.descending,
     )
-    return dataclasses.replace(crate, materialized_track_ids=tuple(track.id for track, _ in values))
+    materialized = dataclasses.replace(crate, materialized_track_ids=tuple(track.id for track, _ in values))
+    LOGGER.info(
+        "Materialized smart crate %s (%s): %d of %d catalog tracks matched %d rules",
+        crate.id,
+        crate.name,
+        len(materialized.materialized_track_ids),
+        len(catalog),
+        len(crate.rules),
+    )
+    return materialized
 
 
 def write_m3u8(path: Path, crate: SmartCrateV1, catalog: Iterable[CatalogTrackV2]) -> None:
+    """Write playable materialized members to an M3U8 without changing audio."""
+
     by_id = {track.id: track for track in catalog}
     lines = ["#EXTM3U"]
     for track_id in crate.materialized_track_ids:
@@ -88,4 +115,4 @@ def write_m3u8(path: Path, crate: SmartCrateV1, catalog: Iterable[CatalogTrackV2
             lines.append(target.as_uri())
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
+    LOGGER.info("Wrote %d playable tracks from smart crate %s to %s", len(lines) - 1, crate.id, path)

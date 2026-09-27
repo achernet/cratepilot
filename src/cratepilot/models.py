@@ -1,3 +1,5 @@
+"""Versioned immutable records shared by services, SQLite, JSON, and the API."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -12,6 +14,8 @@ CATALOG_SCHEMA_VERSION = 2
 
 @dataclass(frozen=True)
 class FeatureContextV1:
+    """DSP features measured at a mixable intro or outro region."""
+
     bpm: float
     camelot: str
     key_confidence: float
@@ -26,6 +30,8 @@ class FeatureContextV1:
 
 @dataclass(frozen=True)
 class CueSuggestionV1:
+    """Suggested hot cues and safe mix boundaries in source seconds."""
+
     hot_cue_a_seconds: float
     hot_cue_b_seconds: float
     hot_cue_c_seconds: float
@@ -35,6 +41,8 @@ class CueSuggestionV1:
 
 @dataclass(frozen=True)
 class TrackAnalysisV1:
+    """Planner-facing audio analysis for one content fingerprint."""
+
     id: str
     artist: str
     title: str
@@ -58,6 +66,8 @@ class TrackAnalysisV1:
 
 @dataclass(frozen=True)
 class TransitionPlanV1:
+    """Score, controls, evidence, and warnings for one ordered transition."""
+
     source_track_id: str
     target_track_id: str
     total_score: float
@@ -76,6 +86,8 @@ class TransitionPlanV1:
 
 @dataclass(frozen=True)
 class SetPlanV1:
+    """An ordered, scored DJ-set draft with hard-lock and warning metadata."""
+
     id: str
     title: str
     preset: str
@@ -93,6 +105,8 @@ class SetPlanV1:
 
 @dataclass(frozen=True)
 class ExportManifestV1:
+    """Audit record for a staged Rekordbox package."""
+
     plan_id: str
     created_at: str
     output_directory: str
@@ -105,6 +119,8 @@ class ExportManifestV1:
 
 @dataclass(frozen=True)
 class SourceReferenceV1:
+    """Provenance linking a canonical track to an external provider record."""
+
     provider: str
     external_id: str | None = None
     url: str | None = None
@@ -114,6 +130,8 @@ class SourceReferenceV1:
 
 @dataclass(frozen=True)
 class LocalAssetV1:
+    """Content-hashed local source or generated derivative."""
+
     kind: str
     path: str
     sha256: str
@@ -123,6 +141,8 @@ class LocalAssetV1:
 
 @dataclass(frozen=True)
 class CatalogTrackV2:
+    """Canonical musical identity combining sources, assets, tags, and analysis."""
+
     id: str
     artist: str
     title: str
@@ -143,6 +163,8 @@ class CatalogTrackV2:
 
 @dataclass(frozen=True)
 class DiscoveryEdgeV1:
+    """Provider evidence connecting two canonical catalog tracks."""
+
     id: str
     source_track_id: str
     target_track_id: str
@@ -155,6 +177,8 @@ class DiscoveryEdgeV1:
 
 @dataclass(frozen=True)
 class DiscoverySessionV1:
+    """Bounded discovery inputs, outputs, progress, and readiness status."""
+
     id: str
     seeds: tuple[dict[str, Any], ...]
     max_depth: int = 2
@@ -174,6 +198,8 @@ class DiscoverySessionV1:
 
 @dataclass(frozen=True)
 class AcquisitionCandidateV1:
+    """Ranked source option awaiting explicit user review."""
+
     id: str
     catalog_track_id: str
     provider: str
@@ -193,6 +219,8 @@ class AcquisitionCandidateV1:
 
 @dataclass(frozen=True)
 class AcquisitionJobV1:
+    """Approved acquisition batch and its verification outcomes."""
+
     id: str
     candidate_ids: tuple[str, ...]
     approved_at: str
@@ -207,6 +235,12 @@ class AcquisitionJobV1:
 
 @dataclass(frozen=True)
 class SmartCrateV1:
+    """A saved, rule-based library view with manual membership overrides.
+
+    Materializing the view records matching catalog IDs; it never relocates or
+    modifies audio files. The resulting IDs can feed planning or M3U8 export.
+    """
+
     id: str
     name: str
     rules: tuple[dict[str, Any], ...] = ()
@@ -219,6 +253,8 @@ class SmartCrateV1:
 
 
 def to_dict(value: Any) -> Any:
+    """Recursively convert dataclasses and tuples to JSON-ready values."""
+
     if dataclasses.is_dataclass(value):
         return {item.name: to_dict(getattr(value, item.name)) for item in dataclasses.fields(value)}
     if isinstance(value, dict):
@@ -229,15 +265,21 @@ def to_dict(value: Any) -> Any:
 
 
 def write_json(path: Path, value: Any) -> None:
+    """Write a formatted UTF-8 JSON representation, creating parent folders."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(to_dict(value), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def context_from_dict(value: dict[str, Any]) -> FeatureContextV1:
+    """Deserialize a feature context."""
+
     return FeatureContextV1(**value)
 
 
 def track_from_dict(value: dict[str, Any]) -> TrackAnalysisV1:
+    """Deserialize a track analysis and its nested records."""
+
     payload = dict(value)
     payload["cues"] = CueSuggestionV1(**payload["cues"])
     payload["intro"] = context_from_dict(payload["intro"])
@@ -246,12 +288,16 @@ def track_from_dict(value: dict[str, Any]) -> TrackAnalysisV1:
 
 
 def transition_from_dict(value: dict[str, Any]) -> TransitionPlanV1:
+    """Deserialize a transition plan."""
+
     payload = dict(value)
     payload["explanation"] = tuple(payload.get("explanation", ()))
     return TransitionPlanV1(**payload)
 
 
 def plan_from_dict(value: dict[str, Any]) -> SetPlanV1:
+    """Deserialize a set plan and its transitions."""
+
     payload = dict(value)
     payload["track_ids"] = tuple(payload["track_ids"])
     payload["locked_positions"] = {int(key): item for key, item in payload.get("locked_positions", {}).items()}
@@ -262,14 +308,20 @@ def plan_from_dict(value: dict[str, Any]) -> SetPlanV1:
 
 
 def source_from_dict(value: dict[str, Any]) -> SourceReferenceV1:
+    """Deserialize a provider source reference."""
+
     return SourceReferenceV1(**value)
 
 
 def asset_from_dict(value: dict[str, Any]) -> LocalAssetV1:
+    """Deserialize a local asset reference."""
+
     return LocalAssetV1(**value)
 
 
 def catalog_track_from_dict(value: dict[str, Any]) -> CatalogTrackV2:
+    """Deserialize a canonical catalog track and nested provenance."""
+
     payload = dict(value)
     payload["sources"] = tuple(source_from_dict(item) for item in payload.get("sources", ()))
     payload["assets"] = tuple(asset_from_dict(item) for item in payload.get("assets", ()))
@@ -278,10 +330,14 @@ def catalog_track_from_dict(value: dict[str, Any]) -> CatalogTrackV2:
 
 
 def discovery_edge_from_dict(value: dict[str, Any]) -> DiscoveryEdgeV1:
+    """Deserialize a discovery graph edge."""
+
     return DiscoveryEdgeV1(**value)
 
 
 def discovery_session_from_dict(value: dict[str, Any]) -> DiscoverySessionV1:
+    """Deserialize a discovery session and restore tuple fields."""
+
     payload = dict(value)
     for key in ("seeds", "discovered_track_ids", "edge_ids", "candidate_ids", "ready_plan_ids", "warnings"):
         payload[key] = tuple(payload.get(key, ()))
@@ -289,6 +345,8 @@ def discovery_session_from_dict(value: dict[str, Any]) -> DiscoverySessionV1:
 
 
 def acquisition_candidate_from_dict(value: dict[str, Any]) -> AcquisitionCandidateV1:
+    """Deserialize a ranked acquisition candidate."""
+
     payload = dict(value)
     payload["explanation"] = tuple(payload.get("explanation", ()))
     payload["legal_links"] = tuple(payload.get("legal_links", ()))
@@ -296,6 +354,8 @@ def acquisition_candidate_from_dict(value: dict[str, Any]) -> AcquisitionCandida
 
 
 def acquisition_job_from_dict(value: dict[str, Any]) -> AcquisitionJobV1:
+    """Deserialize an acquisition job and its generated assets."""
+
     payload = dict(value)
     payload["candidate_ids"] = tuple(payload.get("candidate_ids", ()))
     payload["attempts"] = tuple(payload.get("attempts", ()))
@@ -305,6 +365,8 @@ def acquisition_job_from_dict(value: dict[str, Any]) -> AcquisitionJobV1:
 
 
 def smart_crate_from_dict(value: dict[str, Any]) -> SmartCrateV1:
+    """Deserialize a smart-crate definition and materialized membership."""
+
     payload = dict(value)
     for key in ("rules", "include_track_ids", "exclude_track_ids", "materialized_track_ids"):
         payload[key] = tuple(payload.get(key, ()))

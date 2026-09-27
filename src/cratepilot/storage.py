@@ -1,3 +1,5 @@
+"""SQLite persistence for analyses, plans, jobs, discovery, and smart crates."""
+
 from __future__ import annotations
 
 import json
@@ -31,6 +33,8 @@ DATABASE_VERSION = 3
 
 
 class Store:
+    """Small SQLite repository for every persistent CratePilot record type."""
+
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (user_data_path("CratePilot", "Chernetz") / "cratepilot.db")
         self.path.parent.mkdir(parents=True, exist_ok=True)

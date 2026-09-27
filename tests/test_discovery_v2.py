@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import io
+import json
 import sqlite3
 from pathlib import Path
 
@@ -16,7 +18,7 @@ from cratepilot.models import (
     LocalAssetV1,
     SmartCrateV1,
 )
-from cratepilot.providers import ProviderTrack, ShazamRelatedProvider, VideoResult
+from cratepilot.providers import DeezerSimilarityProvider, ProviderTrack, ShazamRelatedProvider, VideoResult
 from cratepilot.storage import DATABASE_VERSION, Store
 from cratepilot.youtube_scorer import score_youtube_results
 
@@ -88,6 +90,62 @@ def test_shazam_page_fixture_extracts_citation_array():
     assert ShazamRelatedProvider._citations(document)[0]["name"] == "Song"
 
 
+def test_deezer_resolves_manual_seed_then_discovers_similar_artists(monkeypatch):
+    def urlopen(request, *, timeout):
+        assert timeout == 12
+        url = request.full_url
+        if "/search/track?" in url:
+            payload = {
+                "data": [
+                    {"id": 1, "title": "Seed", "link": "https://seed", "artist": {"id": 10, "name": "Artist"}}
+                ]
+            }
+        elif "/artist/10/top?" in url:
+            payload = {
+                "data": [
+                    {"id": 1, "title": "Seed", "link": "https://seed", "artist": {"id": 10, "name": "Artist"}},
+                    {"id": 2, "title": "Another", "link": "https://same", "artist": {"id": 10, "name": "Artist"}},
+                ]
+            }
+        elif "/artist/10/related?" in url:
+            payload = {"data": [{"id": 20, "name": "Different Artist"}]}
+        elif "/artist/20/top?" in url:
+            payload = {
+                "data": [
+                    {
+                        "id": 3,
+                        "title": "Neighbor",
+                        "link": "https://similar",
+                        "artist": {"id": 20, "name": "Different Artist"},
+                    }
+                ]
+            }
+        else:
+            raise AssertionError(f"unexpected URL: {url}")
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr("cratepilot.providers.urllib.request.urlopen", urlopen)
+    provider = DeezerSimilarityProvider(similar_artist_cap=1)
+
+    related = provider.related(ProviderTrack("Artist", "Seed", "manual"), same_artist_limit=10, similar_limit=20)
+
+    assert [(item.artist, item.title, item.relationship) for item in related] == [
+        ("Artist", "Another", "same_artist"),
+        ("Different Artist", "Neighbor", "similar"),
+    ]
+
+
+def test_discovery_without_similarity_provider_is_explicit(tmp_path: Path):
+    store = Store(tmp_path / "db.sqlite")
+    service = DiscoveryService(store)
+    session = service.create_session([ProviderTrack("Artist", "Seed", "manual")])
+
+    completed = service.run(session.id)
+
+    assert len(completed.discovered_track_ids) == 1
+    assert "No similarity provider is configured" in completed.warnings[0]
+
+
 def test_acquisition_requires_standing_acknowledgement_and_explicit_batch(tmp_path: Path):
     store = Store(tmp_path / "db.sqlite")
     catalog = Catalog(store).upsert(ProviderTrack("Artist", "Seed", "manual"))
@@ -137,7 +195,8 @@ def test_smart_crate_rules_manual_overrides_and_stable_m3u(tmp_path: Path):
         "crate", "Peak", rules=({"field": "energy", "operator": "gte", "value": 70},),
         include_track_ids=("first",), order_by="energy",
     )
-    materialized = materialize_crate(crate, catalog, analyses)
+    # Materialization accepts one-shot iterables from stores and query layers.
+    materialized = materialize_crate(crate, iter(catalog), iter(analyses))
     assert materialized.materialized_track_ids == ("first", "second")
     playlist = tmp_path / "music" / "peak.m3u8"
     write_m3u8(playlist, materialized, catalog)

@@ -1,3 +1,5 @@
+"""Native file-picking and safe import helpers for the localhost interface."""
+
 from __future__ import annotations
 
 import os
@@ -11,6 +13,8 @@ from .analysis import SUPPORTED_EXTENSIONS
 
 
 class FilePickerError(RuntimeError):
+    """Raised when a native picker or safe import operation fails."""
+
     pass
 
 
@@ -63,6 +67,8 @@ def _tk_picker(initial_directory: Path, extensions: Iterable[str]) -> Path | Non
 
 
 def choose_audio_file(initial_directory: Path) -> Path | None:
+    """Open the platform picker for one supported audio file."""
+
     initial_directory = initial_directory.expanduser().resolve()
     if os.name == "nt":
         return _windows_picker(initial_directory, SUPPORTED_EXTENSIONS)
@@ -70,6 +76,8 @@ def choose_audio_file(initial_directory: Path) -> Path | None:
 
 
 def choose_playlist_file(initial_directory: Path) -> Path | None:
+    """Open the platform picker for one M3U or M3U8 playlist."""
+
     initial_directory = initial_directory.expanduser().resolve()
     if os.name == "nt":
         script = r"""
@@ -117,6 +125,8 @@ def _safe_component(value: str) -> str:
 
 
 def import_into_library(source: Path, library_root: Path) -> tuple[Path, bool]:
+    """Return an in-library path, copying an external selection when necessary."""
+
     source = source.expanduser().resolve()
     library_root = library_root.expanduser().resolve()
     if not source.is_file():

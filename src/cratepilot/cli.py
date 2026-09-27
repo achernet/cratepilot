@@ -1,3 +1,5 @@
+"""Command-line entry points for local analysis, discovery, planning, and export."""
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +22,14 @@ from .exporter import write_rekordbox_package
 from .identity import stable_id
 from .models import SmartCrateV1, plan_from_dict, to_dict, track_from_dict, write_json
 from .planner import generate_drafts
-from .providers import ProviderTrack, ShazamRelatedProvider, SpotifyMetadataProvider, YtDlpSearchProvider
+from .providers import (
+    DeezerSimilarityProvider,
+    FallbackSimilarityProvider,
+    ProviderTrack,
+    ShazamRelatedProvider,
+    SpotifyMetadataProvider,
+    YtDlpSearchProvider,
+)
 from .recognition import ShazamMusicBrainzVerifier
 from .storage import Store
 
@@ -63,9 +72,21 @@ def _parser() -> argparse.ArgumentParser:
     acquire.add_argument("--run", action="store_true")
     catalog = subparsers.add_parser("catalog", help="Inspect or correct canonical catalog identities")
     catalog.add_argument("--merge", nargs=2, metavar=("TARGET", "SOURCE"))
-    crate = subparsers.add_parser("crate", help="Create a smart crate or export it as M3U8")
+    crate = subparsers.add_parser(
+        "crate",
+        help="Create a rule-based catalog view or export it as M3U8",
+        description=(
+            "A smart crate is a saved rule-based catalog view (like a smart playlist). "
+            "Materializing it selects and orders tracks without changing source audio."
+        ),
+    )
     crate.add_argument("--name")
-    crate.add_argument("--rule", action="append", default=[], help="Rule as field:operator:value")
+    crate.add_argument(
+        "--rule",
+        action="append",
+        default=[],
+        help="field:operator:value; operators: eq, contains, regex, between, gte, lte",
+    )
     crate.add_argument("--order-by", default="energy")
     crate.add_argument("--descending", action="store_true")
     crate.add_argument("--id")
@@ -105,6 +126,8 @@ def _serve(library: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse command-line arguments and execute the selected local workflow."""
+
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -165,7 +188,11 @@ def main(argv: list[str] | None = None) -> int:
             seeds.extend(SpotifyMetadataProvider().resolve(url))
         if not seeds:
             parser.error("discover requires at least one seed or --spotify URL")
-        service = DiscoveryService(store, similarity=ShazamRelatedProvider(), video_search=YtDlpSearchProvider())
+        service = DiscoveryService(
+            store,
+            similarity=FallbackSimilarityProvider(ShazamRelatedProvider(), DeezerSimilarityProvider()),
+            video_search=YtDlpSearchProvider(),
+        )
         session = service.create_session(
             seeds, max_depth=args.max_depth, max_nodes=args.max_nodes,
             readiness_target=args.target_drafts, result_count=args.result_count,

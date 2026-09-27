@@ -1,3 +1,9 @@
+"""Acquire explicitly approved audio candidates and verify their identities.
+
+This module owns the opt-in policy boundary, immutable source archive,
+quarantine behavior, and creation of DJ-ready derivatives.
+"""
+
 from __future__ import annotations
 
 import dataclasses
@@ -22,10 +28,14 @@ LOGGER = logging.getLogger(__name__)
 
 
 class AcquisitionError(RuntimeError):
+    """Raised when approval, acquisition, or verification cannot proceed."""
+
     pass
 
 
 class AudioVerifier(Protocol):
+    """Identity-verification contract used after a candidate is downloaded."""
+
     def verify(self, path: Path, *, artist: str, title: str, samples: int, seconds: int, majority: int) -> dict[str, Any]: ...
 
 
@@ -38,11 +48,15 @@ def _sha256(path: Path) -> str:
 
 
 def sanitize_component(value: str) -> str:
+    """Return a cross-platform-safe filename component."""
+
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
     return re.sub(r"\s+", " ", value)[:160] or "Unknown"
 
 
 class AcquisitionService:
+    """Enforce review policy and produce verified local audio assets."""
+
     def __init__(self, store: Store, *, verifier: AudioVerifier, root: Path | None = None) -> None:
         self.store = store
         self.verifier = verifier

@@ -1,3 +1,5 @@
+"""Verify audio identity by SongRec consensus and enrich years via MusicBrainz."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +14,8 @@ from typing import Any
 
 
 class RecognitionError(RuntimeError):
+    """Raised when sampled audio cannot be inspected or identified reliably."""
+
     pass
 
 
@@ -75,6 +79,8 @@ def _musicbrainz_year(artist: str, title: str) -> tuple[int | None, float]:
 
 
 class ShazamMusicBrainzVerifier:
+    """Reach SongRec consensus, then attach earliest MusicBrainz year evidence."""
+
     def verify(self, path: Path, *, artist: str, title: str, samples: int = 11, seconds: int = 12, majority: int = 6) -> dict[str, Any]:
         duration = _duration(path)
         if duration < seconds:

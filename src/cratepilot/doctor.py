@@ -1,3 +1,5 @@
+"""Report whether CratePilot's required native command-line tools are usable."""
+
 from __future__ import annotations
 
 import shutil
@@ -9,6 +11,8 @@ from typing import Sequence
 
 @dataclass(frozen=True)
 class DependencyStatus:
+    """Availability and version evidence for one native command."""
+
     command: str
     available: bool
     path: str | None
@@ -34,6 +38,8 @@ def _first_line(value: str) -> str | None:
 def dependency_status(
     dependencies: Sequence[tuple[str, tuple[str, ...], str]] = DEPENDENCIES,
 ) -> tuple[DependencyStatus, ...]:
+    """Inspect configured commands without changing the host system."""
+
     results: list[DependencyStatus] = []
     for command, version_args, purpose in dependencies:
         path = shutil.which(command)
@@ -51,6 +57,8 @@ def dependency_status(
 
 
 def doctor_report() -> dict[str, object]:
+    """Return a JSON-ready runtime and dependency health report."""
+
     dependencies = dependency_status()
     return {
         "ok": all(item.available for item in dependencies),

@@ -1,3 +1,5 @@
+"""Rank metadata-only YouTube results for explicit acquisition review."""
+
 from __future__ import annotations
 
 import math
@@ -20,6 +22,8 @@ NON_WORD = re.compile(r"[^a-z0-9]+")
 
 @dataclass(frozen=True)
 class ScoredVideo:
+    """A video candidate plus its normalized score and explanation."""
+
     result: VideoResult
     total: float
     components: dict[str, float]
@@ -46,6 +50,8 @@ def _similarity(expected: str, candidate: str) -> float:
 def score_youtube_results(
     results: Sequence[VideoResult], *, artist: str, title: str, preferred_keywords: Sequence[str] = ()
 ) -> list[ScoredVideo]:
+    """Rank video metadata by identity, version, duration, rank, and popularity."""
+
     if not results:
         return []
     durations = [item.duration_seconds for item in results if item.duration_seconds and 90 <= item.duration_seconds <= 1200]
@@ -75,4 +81,3 @@ def score_youtube_results(
             "artist": round(artist_match, 4), "duration": round(duration, 4), "keywords": round(keyword, 4),
         }, tuple(reasons)))
     return sorted(scored, key=lambda item: (-item.total, item.result.id))
-

@@ -1,3 +1,5 @@
+"""Run cancellable background operations with persisted progress and logs."""
+
 from __future__ import annotations
 
 import logging
@@ -13,11 +15,15 @@ LOGGER = logging.getLogger(__name__)
 
 
 class JobCancelled(RuntimeError):
+    """Internal control-flow signal for cooperative job cancellation."""
+
     pass
 
 
 @dataclass
 class JobContext:
+    """Progress, logging, and cancellation interface passed to an operation."""
+
     job_id: str
     kind: str
     store: Store
@@ -38,6 +44,8 @@ class JobContext:
 
 
 class JobRunner:
+    """Execute operations in daemon threads while persisting observable state."""
+
     def __init__(self, store: Store) -> None:
         self.store = store
         self._cancellations: dict[str, threading.Event] = {}

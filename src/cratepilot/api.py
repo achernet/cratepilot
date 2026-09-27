@@ -1,3 +1,9 @@
+"""Token-protected localhost API for the bundled CratePilot interface.
+
+Endpoints validate local paths and delegate long operations to ``JobRunner``;
+the API itself does not perform remote hosting or accept public uploads.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,12 +28,21 @@ from .identity import stable_id
 from .jobs import JobRunner
 from .models import SmartCrateV1, to_dict
 from .planner import generate_drafts, replan_sequence
-from .providers import ProviderTrack, ShazamRelatedProvider, SpotifyMetadataProvider, YtDlpSearchProvider
+from .providers import (
+    DeezerSimilarityProvider,
+    FallbackSimilarityProvider,
+    ProviderTrack,
+    ShazamRelatedProvider,
+    SpotifyMetadataProvider,
+    YtDlpSearchProvider,
+)
 from .recognition import ShazamMusicBrainzVerifier
 from .storage import Store
 
 
 class LocalState:
+    """Process-local dependencies and security scope for one library root."""
+
     def __init__(self, library_root: Path, store: Store | None = None) -> None:
         self.library_root = library_root.expanduser().resolve()
         self.token = secrets.token_urlsafe(24)
@@ -45,14 +60,20 @@ class LocalState:
 
 
 def is_local_host(value: str) -> bool:
+    """Return whether an HTTP Host value names an accepted loopback host."""
+
     return value.partition(":")[0].casefold() in {"127.0.0.1", "localhost", "testserver"}
 
 
 def is_allowed_origin(value: str | None) -> bool:
+    """Return whether a browser Origin is absent or the bundled local UI."""
+
     return value is None or value in {"http://127.0.0.1:8765", "http://localhost:8765"}
 
 
 def validate_paths_payload(value: Any) -> list[str] | None:
+    """Validate the JSON shape of an optional analysis path list."""
+
     if value is not None and (not isinstance(value, list) or not all(isinstance(item, str) for item in value)):
         raise HTTPException(status_code=422, detail="paths must be a list of files inside the selected library.")
     return value
@@ -66,6 +87,8 @@ def create_app(
     file_picker: Callable[[Path], Path | None] | None = None,
     playlist_picker: Callable[[Path], Path | None] | None = None,
 ) -> FastAPI:
+    """Construct the token-protected FastAPI application for ``library_root``."""
+
     state = LocalState(library_root, store=store)
     app = FastAPI(title="CratePilot Local API", version="1.0.0", docs_url=None, redoc_url=None)
     app.state.cratepilot = state
@@ -243,7 +266,9 @@ def create_app(
         def operation(context) -> dict[str, Any]:
             context.report(0.08, "Expanding provider relationships and merging canonical identities.")
             session = DiscoveryService(
-                state.store, similarity=ShazamRelatedProvider(), video_search=YtDlpSearchProvider()
+                state.store,
+                similarity=FallbackSimilarityProvider(ShazamRelatedProvider(), DeezerSimilarityProvider()),
+                video_search=YtDlpSearchProvider(),
             ).run(session_id, progress_callback=context.report, cancel_check=context.check_cancelled)
             return {"session": to_dict(session)}
 

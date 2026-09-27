@@ -9,6 +9,10 @@ CratePilot is a provenance-aware music discovery and explainable DJ-set planner 
 
 The recommendation model is example-based transition learning combined with DSP heuristics—not an autonomous “AI DJ.” The workshop that preceded this extraction has 99 passing tests and 7 passing subtests; this repository adds product-specific planner, schema, storage, security, and export coverage.
 
+## What is a smart crate?
+
+A **smart crate is a saved, rule-based view of the music catalog**—the DJ-library equivalent of a smart playlist. For example, `energy >= 75` can define a “Peak” crate, while tags, BPM, key, year, duration, artist, title, and verification state can narrow it further. CratePilot recomputes matching track IDs when the crate is materialized, applies explicit include/exclude overrides, and can send that ordered result to planning or write it as an M3U8 playlist. It never moves, renames, copies, or deletes source audio.
+
 ## Run locally
 
 On Windows 10/11, download the [one-click installer](https://github.com/achernet/cratepilot/releases/latest/download/CratePilot-Setup-x64.exe). It bundles an isolated Python 3.13 runtime plus `songrec`, FFmpeg/FFprobe, `mp3gain`, and `yt-dlp`, adds CratePilot's command shims to the user PATH, and runs `cratepilot doctor` before launch.
@@ -45,6 +49,8 @@ cratepilot crate --id CRATE_ID --output peak.m3u8
 cratepilot doctor                         # verify every native command
 ~~~
 
+Smart-crate rule syntax is `field:operator:value`. Supported operators are `eq`, `contains`, `regex`, `between`, `gte`, and `lte`; supported fields are `artist`, `title`, `year`, `verification_state`, `tags`, `bpm`, `energy`, `key`, `camelot`, `duration_seconds`, and `community`.
+
 See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for the complete Windows and Rekordbox handoff.
 
 ## What the planner optimizes
@@ -77,6 +83,8 @@ The old .djlearn workspace, cached audio, personal filenames, and absolute music
 Local acquisition is off by default. Safe mode exposes Beatport, Bandcamp, and YouTube source links. Enabling automation requires a versioned standing acknowledgement saved in the local SQLite database and an explicit review batch of at most 30 candidates. Downloaded sources are content-addressed and immutable; verified 320 kbps DJ derivatives are separate files. SongRec invokes Shazam recognition through its external JSON CLI, so CratePilot supports Python 3.13+ without importing `shazamio`. Identity mismatches are quarantined rather than promoted.
 
 Spotify is used for metadata and links only. Configure `CRATEPILOT_SPOTIFY_CLIENT_ID` and `CRATEPILOT_SPOTIFY_CLIENT_SECRET` for public track or playlist resolution; no Spotify-hosted audio is downloaded or analyzed.
+
+Deezer's public catalog is used as a metadata-only similarity fallback for manual and Spotify seeds: CratePilot resolves the seed, reads same-artist top tracks and related artists, and stores source links/provenance. It does not stream or download Deezer audio.
 
 ## First-booth checklist
 

@@ -1,3 +1,5 @@
+"""Score explainable transitions and build deterministic DJ-set drafts."""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +17,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class PlanningError(RuntimeError):
+    """Raised when constraints cannot produce a valid set plan."""
+
     pass
 
 
@@ -33,6 +37,8 @@ def _camelot_label(distance: float) -> str:
 
 
 def score_transition(source: TrackAnalysisV1, target: TrackAnalysisV1) -> TransitionPlanV1:
+    """Score and explain the transition from ``source`` to ``target``."""
+
     bpm_delta = target.bpm - source.bpm
     tempo_factor = source.bpm / target.bpm if target.bpm else 1.0
     tempo_change = abs(tempo_factor - 1.0)
@@ -103,11 +109,15 @@ def score_transition(source: TrackAnalysisV1, target: TrackAnalysisV1) -> Transi
 
 
 def transition_seconds(transition: TransitionPlanV1, source: TrackAnalysisV1, target: TrackAnalysisV1) -> float:
+    """Convert a transition's crossfade bars to overlap seconds."""
+
     bpm = max(1.0, (source.bpm + target.bpm) / 2.0)
     return transition.crossfade_bars * 4.0 * 60.0 / bpm
 
 
 def plan_duration(sequence: Sequence[TrackAnalysisV1], transitions: Sequence[TransitionPlanV1]) -> float:
+    """Compute audible plan length after subtracting transition overlaps."""
+
     total = sum(track.duration_seconds for track in sequence)
     for index, transition in enumerate(transitions):
         total -= transition_seconds(transition, sequence[index], sequence[index + 1])
@@ -115,6 +125,8 @@ def plan_duration(sequence: Sequence[TrackAnalysisV1], transitions: Sequence[Tra
 
 
 def target_energy(position: float) -> float:
+    """Interpolate the First Booth energy curve at a normalized position."""
+
     position = min(1.0, max(0.0, position))
     scaled = position * (len(FIRST_BOOTH_CURVE) - 1)
     left = int(math.floor(scaled))
@@ -170,6 +182,8 @@ def generate_drafts(
     progress_callback: Callable[[float, str], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> list[SetPlanV1]:
+    """Use bounded beam search to produce ranked, deterministic set drafts."""
+
     if not 1 <= count <= 30:
         raise PlanningError("Draft count must be between 1 and 30.")
     library = tuple(sorted(tracks, key=lambda item: item.id))
@@ -321,6 +335,8 @@ def evaluate_readiness(
 
 
 def replan_sequence(sequence: Sequence[TrackAnalysisV1], *, title: str, preset: str = "manual") -> SetPlanV1:
+    """Re-score a user-supplied track order without changing that order."""
+
     if len({item.id for item in sequence}) != len(sequence):
         raise PlanningError("A set cannot contain duplicate tracks.")
     transitions = tuple(score_transition(source, target) for source, target in zip(sequence, sequence[1:]))

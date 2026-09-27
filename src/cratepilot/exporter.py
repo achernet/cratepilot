@@ -1,3 +1,5 @@
+"""Stage a non-destructive, auditable Rekordbox handoff package."""
+
 from __future__ import annotations
 
 import csv
@@ -18,6 +20,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ExportError(RuntimeError):
+    """Raised when a safe export package cannot be produced."""
+
     pass
 
 
@@ -32,6 +36,8 @@ REKORDBOX_CHECKLIST = (
 
 
 def sanitize_filename(value: str) -> str:
+    """Return a conservative filename valid on Windows and POSIX systems."""
+
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " - ", value)
     value = re.sub(r"(?:\s*-\s*)+", " - ", value)
     value = re.sub(r"\s+", " ", value).strip(" .-")
@@ -39,6 +45,8 @@ def sanitize_filename(value: str) -> str:
 
 
 def sha256(path: Path) -> str:
+    """Return the hexadecimal SHA-256 digest of a file."""
+
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -84,6 +92,8 @@ def write_rekordbox_package(
     render_reference: bool = False,
     analysis_cache: Path | None = None,
 ) -> ExportManifestV1:
+    """Copy a plan into a new Rekordbox handoff directory and manifest it."""
+
     output_directory = output_directory.expanduser().resolve()
     LOGGER.info("Exporting plan %s with %d tracks to %s", plan.id, len(plan.track_ids), output_directory)
     if output_directory.exists() and any(output_directory.iterdir()):

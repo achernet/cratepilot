@@ -1,3 +1,11 @@
+"""Build a provenance-aware similarity graph and acquisition review queue.
+
+Discovery is breadth-first: seeds are resolved to canonical catalog identities,
+expanded through a similarity provider, and deduplicated before being queued.
+The resulting graph is metadata only; audio acquisition remains a separate,
+explicitly reviewed workflow.
+"""
+
 from __future__ import annotations
 
 import dataclasses
@@ -25,6 +33,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 def legal_source_links(artist: str, title: str) -> tuple[dict[str, str], ...]:
+    """Return safe search links for sources a user can review manually."""
+
     from urllib.parse import quote_plus
 
     query = quote_plus(f"{artist} {title}")
@@ -36,10 +46,14 @@ def legal_source_links(artist: str, title: str) -> tuple[dict[str, str], ...]:
 
 
 class Catalog:
+    """Canonical identity layer over provider records stored in SQLite."""
+
     def __init__(self, store: Store) -> None:
         self.store = store
 
     def upsert(self, track: ProviderTrack, *, verification_state: str = "unverified", analysis_id: str | None = None) -> CatalogTrackV2:
+        """Insert or merge a provider record by normalized artist/title/version."""
+
         title, version = split_version(track.title)
         identity = canonical_identity(track.artist, title, version)
         existing = self.store.catalog_track_by_identity(identity)
@@ -77,6 +91,8 @@ class Catalog:
         return value
 
     def import_analyses(self, tracks: Iterable[TrackAnalysisV1]) -> list[CatalogTrackV2]:
+        """Link local analyses into the canonical catalog as verified tracks."""
+
         values = []
         for track in tracks:
             values.append(self.upsert(ProviderTrack(
@@ -87,6 +103,8 @@ class Catalog:
         return values
 
     def merge(self, target_id: str, source_id: str) -> CatalogTrackV2:
+        """Merge a user-confirmed duplicate into ``target_id`` and remove the source."""
+
         target, source = self.store.catalog_track(target_id), self.store.catalog_track(source_id)
         if not target or not source:
             raise KeyError("Catalog track not found")
@@ -109,6 +127,8 @@ class Catalog:
 
 
 class DiscoveryService:
+    """Coordinate similarity expansion, source ranking, and draft readiness."""
+
     def __init__(
         self, store: Store, *, similarity: SimilarityProvider | None = None,
         video_search: VideoSearchProvider | None = None,
@@ -122,6 +142,8 @@ class DiscoveryService:
         self, seeds: Sequence[ProviderTrack], *, max_depth: int = 2, max_nodes: int = 150,
         review_batch_size: int = 30, readiness_target: int = 8, result_count: int = 30,
     ) -> DiscoverySessionV1:
+        """Validate bounded discovery settings and persist a queued session."""
+
         if not 1 <= readiness_target <= 30:
             raise ValueError("readiness_target must be between 1 and 30")
         if not 1 <= result_count <= 100:
@@ -142,18 +164,31 @@ class DiscoveryService:
         progress_callback: Callable[[float, str], None] | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> DiscoverySessionV1:
+        """Expand a session's seeds and persist its graph, candidates, and status."""
+
         report = progress_callback or (lambda _progress, _message: None)
         check_cancelled = cancel_check or (lambda: None)
         session = self.store.discovery_session(session_id)
         if not session:
             raise KeyError("Discovery session not found")
         seeds = [ProviderTrack(**seed) for seed in session.seeds]
-        queue = deque((seed, 0, None) for seed in seeds)
+        queue: deque[tuple[ProviderTrack, int, str | None]] = deque()
+        scheduled: set[str] = set()
+        for seed in seeds:
+            title, version = split_version(seed.title)
+            identity = canonical_identity(seed.artist, title, version)
+            if identity not in scheduled:
+                queue.append((seed, 0, None))
+                scheduled.add(identity)
         seen: set[str] = set()
         track_ids: list[str] = []
         edge_ids: list[str] = []
         warnings: list[str] = []
         LOGGER.info("Starting discovery %s with %d seeds and a %d-node cap", session.id, len(seeds), session.max_nodes)
+        if self.similarity is None and session.max_depth > 0:
+            message = "No similarity provider is configured; only the seed tracks can be cataloged."
+            warnings.append(message)
+            LOGGER.warning("Discovery %s: %s", session.id, message)
         while queue and len(seen) < session.max_nodes:
             check_cancelled()
             provider_track, depth, parent = queue.popleft()
@@ -177,14 +212,39 @@ class DiscoveryService:
             if depth >= session.max_depth or self.similarity is None:
                 continue
             try:
+                report(
+                    min(0.62, 0.04 + 0.58 * len(seen) / max(1, session.max_nodes)),
+                    f"Finding tracks related to {current.artist} — {current.title} at graph depth {depth}.",
+                )
                 related = self.similarity.related(provider_track, same_artist_limit=10, similar_limit=20)
             except Exception as exc:
-                warnings.append(f"{provider_track.artist} — {provider_track.title}: discovery provider unavailable ({exc})")
+                message = f"{provider_track.artist} — {provider_track.title}: discovery provider unavailable ({exc})"
+                warnings.append(message)
+                LOGGER.warning("Discovery %s: %s", session.id, message)
                 continue
+            added = 0
             for neighbor in related:
-                if len(seen) + len(queue) >= session.max_nodes:
+                neighbor_title, neighbor_version = split_version(neighbor.title)
+                identity = canonical_identity(neighbor.artist, neighbor_title, neighbor_version)
+                if identity in scheduled:
+                    LOGGER.debug("Skipping duplicate discovery identity %s", identity)
+                    continue
+                if len(scheduled) >= session.max_nodes:
                     break
                 queue.append((neighbor, depth + 1, current.id))
+                scheduled.add(identity)
+                added += 1
+            LOGGER.info(
+                "Expanded %s — %s with %d new canonical neighbors (%d provider results)",
+                current.artist,
+                current.title,
+                added,
+                len(related),
+            )
+            if not related:
+                message = f"{current.artist} — {current.title}: no related tracks were returned."
+                warnings.append(message)
+                LOGGER.warning("Discovery %s: %s", session.id, message)
         report(0.65, f"Ranking up to {session.review_batch_size} mixable source candidates.")
         candidates = self._build_candidates(
             track_ids, session.result_count, session.review_batch_size,
@@ -220,6 +280,7 @@ class DiscoveryService:
         report = progress_callback or (lambda _progress, _message: None)
         check_cancelled = cancel_check or (lambda: None)
         if self.video_search is None:
+            LOGGER.info("Skipping source candidate search because no video provider is configured")
             return []
         candidates: list[AcquisitionCandidateV1] = []
         for track_index, track_id in enumerate(track_ids):
@@ -233,7 +294,8 @@ class DiscoveryService:
                     f"Searching versions for {track.artist} — {track.title}.",
                 )
                 results = self.video_search.search(track.artist, track.title, limit=result_count)
-            except Exception:
+            except Exception as exc:
+                LOGGER.warning("Source search failed for %s — %s: %s", track.artist, track.title, exc)
                 continue
             for rank, scored in enumerate(score_youtube_results(results, artist=track.artist, title=track.title), 1):
                 candidate = AcquisitionCandidateV1(
@@ -269,7 +331,8 @@ class DiscoveryService:
                 ),
                 cancel_check=cancel_check,
             )
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("Strict draft readiness evaluation failed: %s", exc)
             return []
         accepted = []
         for draft in drafts:

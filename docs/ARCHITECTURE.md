@@ -23,6 +23,24 @@ React/TypeScript UI                              │
                                      M3U8 + cues + FLAC + checksums
 ~~~
 
+## Core Python modules
+
+| Module | Responsibility | Does not do |
+| --- | --- | --- |
+| `analysis.py` | Scans supported audio and runs parallel per-track DSP, preserving input order. | Identify songs or choose a set order. |
+| `api.py` | Defines the token-protected loopback API and connects requests to background jobs. | Host a public service or trust arbitrary paths. |
+| `cli.py` / `__main__.py` | Parse commands and compose the same local services used by the UI. | Contain discovery, DSP, or planning algorithms. |
+| `identity.py` / `models.py` | Define canonical IDs and versioned records shared by JSON, SQLite, and services. | Perform I/O or provider calls. |
+| `providers.py` | Resolve Spotify metadata, Shazam local-seed pages, Deezer metadata similarity, and yt-dlp search results. | Download or approve audio. |
+| `discovery.py` | Breadth-first similarity expansion, canonical deduplication, provenance edges, candidate ranking, and readiness checks. | Acquire audio automatically. |
+| `acquisition.py` / `recognition.py` | Enforce explicit approval, acquire candidates, verify SongRec consensus, enrich years, and quarantine mismatches. | Run unless the local policy acknowledgement and batch approval are present. |
+| `planner.py` | Score transitions and generate deterministic bounded-beam drafts from analyzed tracks. | Silently override locks or warnings. |
+| `crates.py` | Recompute smart-crate membership from saved rules and manual overrides, then optionally write M3U8. | Move or modify source tracks. |
+| `exporter.py` | Stage copied tracks, cues, checksums, playlists, manifests, and an optional reference mix. | Write Pioneer/AlphaTheta databases. |
+| `storage.py` / `jobs.py` | Persist records, progress, logs, and cooperative cancellation state in SQLite. | Define product policy or scoring. |
+| `file_picker.py` / `doctor.py` | Provide platform file selection/import boundaries and native dependency diagnostics. | Analyze audio. |
+| `youtube_scorer.py` | Explainably rank source metadata for human review. | Download a result. |
+
 ## Stable models
 
 - TrackAnalysisV1 holds display metadata, duration, BPM/key/Camelot, energy, audible bounds, cue suggestions, and intro/outro feature vectors.
@@ -32,7 +50,7 @@ React/TypeScript UI                              │
 - CatalogTrackV2 holds canonical identity, external identifiers, provenance, verification state, local assets, year evidence, tags, and the linked analysis.
 - DiscoveryEdgeV1 and DiscoverySessionV1 persist bounded, resumable graph traversal and readiness results.
 - AcquisitionCandidateV1 and AcquisitionJobV1 make ranking, approval, attempts, verification, quarantine, and generated assets auditable.
-- SmartCrateV1 stores declarative rules plus explicit inclusion/exclusion and materialized membership.
+- SmartCrateV1 stores a saved catalog query (a “smart playlist” for a DJ library), explicit inclusion/exclusion, ordering, and the last materialized membership. Materialization changes the saved view, never the audio files.
 
 ## Trust boundaries
 
